@@ -337,7 +337,7 @@ namespace rs {
 		return out;
 	}
 
-	tokenizer::token tokenizer::string_constant(bool expected) {
+	tokenizer::token tokenizer::string_constant(bool expected, bool strip_quotes, bool allow_empty) {
 		token out;
 
 		whitespace();
@@ -348,7 +348,7 @@ namespace rs {
 		token bt = character('\'', expected);
 		if (bt.text.length() == 0) return { 0, 0, "", "" };
 
-		out.text += '\'';
+		if (!strip_quotes) out.text += '\'';
 		bool foundEnd = false;
 		bool lastWasNewline = false;
 		while(!at_end()) {
@@ -359,7 +359,7 @@ namespace rs {
 
 			token end = character('\'', false);
 			if (end.text.length() != 0 && last != '\\') {
-				out.text += '\'';
+				if (!strip_quotes) out.text += '\'';
 				foundEnd = true;
 				break;
 			}
@@ -381,9 +381,19 @@ namespace rs {
 			throw parse_exception(
 				"Encountered unexpected end of file while parsing string constant",
 				m_file,
-				lines[m_line],
-				m_line,
-				m_col
+				lines[bt.line],
+				bt.line,
+				bt.col
+			);
+		}
+
+		if (!allow_empty && out.text.length() == 0) {
+			throw parse_exception(
+				"String should not be empty",
+				m_file,
+				lines[bt.line],
+				bt.line,
+				bt.col
 			);
 		}
 

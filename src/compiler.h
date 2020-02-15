@@ -60,6 +60,7 @@ namespace rs {
 			bool compile_expression(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 			bool compile_statement(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool parseSemicolon = true);
 			bool compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions);
+			bool compile_json(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 	};
 };
 

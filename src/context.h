@@ -15,11 +15,13 @@ namespace rs {
 				void* data;
 				size_t size;
 				type_id type;
+				bool external;
 			};
 
 			void set(variable_id id, type_id type, size_t size, void* data);
 			variable_id set(type_id type, size_t size, void* data);
 			variable_id set_static(type_id type, size_t size, void* data);
+			variable_id inject(type_id type, size_t size, void* ptr);
 			mem_var& get(variable_id id);
 
 			void deallocate(variable_id id);
@@ -30,8 +32,8 @@ namespace rs {
 			std::unordered_map<variable_id, mem_var> m_vars;
 			std::unordered_map<variable_id, mem_var> m_static_vars;
 
-			static mem_var null;
 			static variable_id next_var_id;
+			static mem_var null;
 	};
 
 	typedef void (*instruction_callback)(execution_state*, instruction_array::instruction*);
@@ -67,6 +69,7 @@ namespace rs {
 
 			void add_code(const std::string& code);
 			void execute(const std::string& code, context_memory::mem_var& result);
+			const context_parameters& params() const { return m_params; }
 
 			struct instruction_set {
 				instruction_callback callbacks[rs_instruction::instruction_count];

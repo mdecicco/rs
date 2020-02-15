@@ -11,14 +11,14 @@ namespace rs {
 			execution_state(const context_parameters& params, context* ctx);
 			~execution_state();
 
-			void execute_all(u64 entry_point);
+			void execute_all(integer_type entry_point);
 			void execute_next();
 
 			void push_state();
 			void pop_state(rs_register persist);
 			void push_scope();
 			void pop_scope();
-			void print_instruction(u64 idx, const instruction_array::instruction& i);
+			void print_instruction(integer_type idx, const instruction_array::instruction& i);
 			inline context* ctx() { return m_ctx; }
 			inline register_type* registers() { return m_stack[m_stack_idx]; }
 

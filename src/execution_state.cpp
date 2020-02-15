@@ -1,73 +1,59 @@
 #include <execution_state.h>
 #include <context.h>
+#include <object.h>
 
 namespace rs {
-
 	std::string v2s(rs::context_memory::mem_var& v) {
 		std::string val;
 		if (!v.data) val = "undefined";
 		else {
 			switch (v.type) {
-			case rs::rs_builtin_type::t_string: {
-				val = std::string((char*)v.data, v.size);
-				break;
-			}
-			case rs::rs_builtin_type::t_int8: {
-				val = rs::format("%d", *(char*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_uint8: {
-				val = rs::format("%u", *(unsigned char*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_int16: {
-				val = rs::format("%d", *(short*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_uint16: {
-				val = rs::format("%u", *(unsigned short*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_int32: {
-				val = rs::format("%d", *(rs::i32*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_uint32: {
-				val = rs::format("%u", *(rs::u32*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_int64: {
-				val = rs::format("%ll", *(rs::i64*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_uint64: {
-				val = rs::format("%llu", *(rs::u64*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_float: {
-				val = rs::format("%f", *(float*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_double: {
-				val = rs::format("%f", *(double*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_class: {
-				val = "class";
-				break;
-			}
-			case rs::rs_builtin_type::t_function: {
-				val = "function";
-				break;
-			}
-			case rs::rs_builtin_type::t_object: {
-				val = "object";
-				break;
-			}
-			default: {
-				val = "scripted type";
-				break;
-			}
+				case rs::rs_builtin_type::t_string: {
+					val = std::string((char*)v.data, v.size);
+					break;
+				}
+				case rs::rs_builtin_type::t_integer: {
+					val = rs::format("%d", *(integer_type*)v.data);
+					break;
+				}
+				case rs::rs_builtin_type::t_decimal: {
+					val = rs::format("%f", *(decimal_type*)v.data);
+					break;
+				}
+				case rs::rs_builtin_type::t_bool: {
+					val = rs::format("%s", (*(bool*)v.data) ? "true" : "false");
+					break;
+				}
+				case rs::rs_builtin_type::t_class: {
+					val = "class";
+					break;
+				}
+				case rs::rs_builtin_type::t_function: {
+					val = "function";
+					break;
+				}
+				case rs::rs_builtin_type::t_object: {
+					script_object* obj = (script_object*)v.data;
+					auto properties = obj->properties();
+					val = "{ ";
+
+					u32 i = 0;
+					for (auto& p : properties) {
+						if (i > 0) val += ", ";
+						val += p.name + ": " + v2s(obj->ctx()->memory->get(p.id));
+						i++;
+					}
+
+					if (i > 0) val += " ";
+
+					val += "}";
+
+					break;
+				}
+				default: {
+					val = "scripted type";
+					break;
+				}
 			}
 		}
 
@@ -88,23 +74,23 @@ namespace rs {
 		delete [] m_stack;
 	}
 
-	void execution_state::execute_all(u64 entry_point) {
-		u64 instruction_addr = entry_point;
-		variable_id instruction_addr_id = m_ctx->memory->set(rs_builtin_type::t_uint64, sizeof(u64), &instruction_addr);
+	void execution_state::execute_all(integer_type entry_point) {
+		integer_type instruction_addr = entry_point;
+		variable_id instruction_addr_id = m_ctx->memory->set(rs_builtin_type::t_integer, sizeof(integer_type), &instruction_addr);
 		registers()[rs_register::instruction_address] = instruction_addr_id;
-		u64 return_addr = UINT64_MAX;
-		variable_id return_addr_id = m_ctx->memory->set(rs_builtin_type::t_uint64, sizeof(u64), &return_addr);
+		integer_type return_addr = UINT64_MAX;
+		variable_id return_addr_id = m_ctx->memory->set(rs_builtin_type::t_integer, sizeof(integer_type), &return_addr);
 		registers()[rs_register::return_address] = return_addr_id;
 
 		const context::instruction_set* default_iset = m_ctx->get_instruction_set(0);
 
 		m_last_printed_col = -1;
 		m_last_printed_line = -1;
-		u64* iaddr = (u64*)m_ctx->memory->get(instruction_addr_id).data;
+		integer_type* iaddr = (integer_type*)m_ctx->memory->get(instruction_addr_id).data;
 		while ((*iaddr) < m_ctx->instructions->count()) {
 			auto& instruction = (*m_ctx->instructions)[(*iaddr)++];
-
 			print_instruction((*iaddr) - 1, instruction);
+			if (instruction.code == rs_instruction::null_instruction) continue;
 
 			const context::instruction_set* iset = default_iset;
 			if (instruction.arg_count > 0) {
@@ -138,12 +124,15 @@ namespace rs {
 
 		register_type* prev = m_stack[m_stack_idx++];
 		register_type* now = m_stack[m_stack_idx];
+		now[rs_register::lvalue] = prev[rs_register::lvalue];
+		now[rs_register::rvalue] = prev[rs_register::rvalue];
+		now[rs_register::this_obj] = prev[rs_register::this_obj];
 		for (u8 x = 0;x < 8;x++) now[rs_register::parameter0 + x] = prev[rs_register::parameter0 + x];
 		now[rs_register::instruction_address] = prev[rs_register::instruction_address];
 
 
-		u64 return_addr = UINT64_MAX;
-		variable_id return_addr_id = m_ctx->memory->set(rs_builtin_type::t_uint64, sizeof(u64), &return_addr);
+		integer_type return_addr = rs_integer_max;
+		variable_id return_addr_id = m_ctx->memory->set(rs_builtin_type::t_integer, sizeof(integer_type), &return_addr);
 		now[rs_register::return_address] = return_addr_id;
 	}
 
@@ -169,11 +158,13 @@ namespace rs {
 	void execution_state::pop_scope() {
 	}
 
-	void execution_state::print_instruction(u64 idx, const instruction_array::instruction& i) {
+	void execution_state::print_instruction(integer_type idx, const instruction_array::instruction& i) {
 		static const char* istr[] = {
 			"null",
 			"store",
+			"newObj",
 			"prop",
+			"propAssign",
 			"move",
 			"add",
 			"sub",
@@ -195,10 +186,12 @@ namespace rs {
 			"andEq",
 			"lessEq",
 			"greaterEq",
+			"compare",
 			"inc",
 			"dec",
 			"branch",
 			"call",
+			"jump",
 			"ret",
 			"pushState",
 			"popState",

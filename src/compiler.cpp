@@ -1,11 +1,64 @@
 #include <compiler.h>
 #include <context.h>
 #include <parse_utils.h>
+#include <object.h>
 using namespace std;
 
 namespace rs {
 	using instruction = instruction_array::instruction;
 	using token = tokenizer::token;
+
+	variable_id define_static_number(context* ctx, const token& tok, const script_compiler::parse_context& pctx, const tokenizer& t) {
+		variable_id vid = 0;
+
+		if (tok.text.find_first_of(".") != string::npos) {
+			double num = atof(tok.text.c_str());
+			decimal_type v = num;
+			if (num < rs_decimal_min || num > rs_decimal_max) {
+				throw parse_exception(
+					format("Number '%s' is too large for internal data type", tok.text.c_str()),
+					pctx.file,
+					t.lines[tok.line],
+					tok.line,
+					tok.col
+				);
+			}
+			vid = ctx->memory->set_static(
+				rs_builtin_type::t_decimal,
+				sizeof(decimal_type),
+				&v
+			);
+		} else {
+			auto num = atoll(tok.text.c_str());
+			integer_type v = num;
+			if (num < rs_integer_min || num > rs_integer_max) {
+				throw parse_exception(
+					format("Number '%s' is too large for internal data type", tok.text.c_str()),
+					pctx.file,
+					t.lines[tok.line],
+					tok.line,
+					tok.col
+				);
+			}
+			vid = ctx->memory->set_static(
+				rs_builtin_type::t_integer,
+				sizeof(integer_type),
+				&v
+			);
+		}
+
+		return vid;
+	}
+
+	variable_id define_static_string(context* ctx, const string& t) {
+		return ctx->memory->set_static(
+			rs_builtin_type::t_string,
+			t.length(),
+			(void*)t.c_str()
+		);
+	}
+
+
 
 	script_compiler::script_compiler(const context_parameters& params) {
 		m_script_context = params.ctx;
@@ -13,6 +66,8 @@ namespace rs {
 
 	script_compiler::~script_compiler() {
 	}
+
+
 
 	script_compiler::var_ref::var_ref(context* ctx, const tokenizer::token& t, bool constant) {
 		name = t;
@@ -34,6 +89,8 @@ namespace rs {
 		id = var.id;
 		reg = rs_register::null_register;
 	}
+
+
 
 	void script_compiler::parse_context::push_locals() {
 		locals.push_back(ref_vec());
@@ -83,6 +140,8 @@ namespace rs {
 		return nullptr;
 	}
 
+
+
 	bool script_compiler::compile(const std::string& code, instruction_array& instructions) {
 		tokenizer t("test", code);
 		t.specify_keyword("function");
@@ -91,6 +150,7 @@ namespace rs {
 		t.specify_keyword("const");
 		t.specify_keyword("let");
 		t.specify_keyword("if");
+		t.specify_keyword("else");
 		t.specify_keyword("while");
 		t.specify_keyword("for");
 		t.specify_keyword("else");
@@ -169,8 +229,16 @@ namespace rs {
 		auto func_kw = t.keyword(false, "function");
 		if (!func_kw.valid()) return nullptr;
 
+		instruction& jump_over = instructions.append(
+			instruction(rs_instruction::jump),
+			ctx.file,
+			func_kw.line,
+			func_kw.col,
+			t.lines[func_kw.line]
+		);
+
 		ref_vec params;
-		u64 first_instruction = instructions.count();
+		integer_type first_instruction = instructions.count();
 
 		ctx.push_locals();
 
@@ -192,7 +260,7 @@ namespace rs {
 		script_function* func = new script_function;
 		func->name = func_name;
 		func->params = params;
-		func->instruction_offset = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &first_instruction);
+		func->instruction_offset = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &first_instruction);
 		ctx.currentFunction = func;
 
 		bool closed = false;
@@ -221,6 +289,9 @@ namespace rs {
 		ctx.pop_locals();
 
 		func->instruction_count = instructions.count() - first_instruction;
+		integer_type jump_to = instructions.count();
+		variable_id  jump_to_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &jump_to);
+		jump_over.arg(jump_to_id);
 
 		return func;
 	}
@@ -433,12 +504,7 @@ namespace rs {
 		else {
 			const_token = t.number_constant(false);
 			if (const_token.valid()) {
-				i32 num = atoll(const_token.text.c_str());
-				variable_id vid = m_script_context->memory->set_static(
-					rs_builtin_type::t_int32,
-					sizeof(i32),
-					(void*)(&num)
-				);
+				variable_id vid = define_static_number(m_script_context, const_token, ctx, t);
 				instructions.append(
 					instruction(rs_instruction::move).arg(rs_register::lvalue).arg(vid),
 					ctx.file,
@@ -449,12 +515,8 @@ namespace rs {
 			} else {
 				const_token = t.string_constant(false);
 				if (const_token.valid()) {
-					variable_id vid = m_script_context->memory->set_static(
-						rs_builtin_type::t_string,
-						const_token.text.length(),
-						(void*)const_token.text.c_str()
-					);
-
+					variable_id vid = define_static_string(m_script_context, const_token.text);
+					
 					instructions.append(
 						instruction(rs_instruction::move).arg(rs_register::lvalue).arg(vid),
 						ctx.file,
@@ -462,7 +524,7 @@ namespace rs {
 						const_token.col,
 						t.lines[const_token.line]
 					);
-				} else {
+				} else if (!compile_json(t, ctx, instructions, false)) {
 					if (!expected) {
 						t.restore_state();
 						instructions.restore();
@@ -487,18 +549,7 @@ namespace rs {
 		}
 
 		bool compiled_rhs = false;
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::store    , "=", true);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::add      , "+"  , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::sub      , "-"  , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::mul      , "*"  , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::div      , "/"  , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::mod      , "%"  , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::pow      , "^"  , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::or       , "||" , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::and      , "&&" , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::less     , "<"  , false);
-		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::greater  , ">"  , false);
-
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::compare  , "==" , false);
 		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::addEq    , "+=" , true );
 		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::subEq    , "-=" , true );
 		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::mulEq    , "*=" , true );
@@ -511,6 +562,18 @@ namespace rs {
 		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::greaterEq, ">=" , false);
 		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::inc      , "++" , true , false);
 		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::dec      , "--" , true , false);
+
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::store    , "=", true);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::add      , "+"  , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::sub      , "-"  , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::mul      , "*"  , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::div      , "/"  , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::mod      , "%"  , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::pow      , "^"  , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::or       , "||" , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::and      , "&&" , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::less     , "<"  , false);
+		if (!compiled_rhs) compiled_rhs = do_operator(rs_instruction::greater  , ">"  , false);
 
 		if (compiled_rhs) return true;
 
@@ -558,8 +621,8 @@ namespace rs {
 				compile_expression(t, ctx, instructions, true);
 				t.character(')');
 
-				u64 pass_address = instructions.count() + 1;
-				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &pass_address);
+				integer_type pass_address = instructions.count() + 1;
+				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &pass_address);
 
 				instruction& branch = instructions.append(
 					instruction(rs_instruction::branch).arg(rs_register::rvalue).arg(pass_addr_id),
@@ -577,6 +640,7 @@ namespace rs {
 					t.lines[kw.line]
 				);
 
+				token final_token;
 				auto block_open = t.character('{', false);
 				if (block_open.valid()) {
 					ctx.push_locals();
@@ -595,6 +659,7 @@ namespace rs {
 							block_open.col
 						);
 					}
+					final_token = closed;
 
 					instructions.append(
 						instruction(rs_instruction::popScope),
@@ -604,40 +669,122 @@ namespace rs {
 						t.lines[closed.line]
 					);
 
-					u64 fail_address = instructions.count();
-					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &fail_address);
+					integer_type fail_address = instructions.count() + 1;
+					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
 					branch.arg(fail_addr_id);
 					ctx.pop_locals();
 				} else {
 					compile_statement(t, ctx, instructions, false);
-					auto sc = t.semicolon();
+					if (parseSemicolon) {
+						final_token = t.semicolon();
+						instructions.append(
+							instruction(rs_instruction::popScope),
+							ctx.file,
+							final_token.line,
+							final_token.col,
+							t.lines[final_token.line]
+						);
+					} else {
+						final_token.line = t.line();
+						final_token.col = t.col();
 
-					instructions.append(
-						instruction(rs_instruction::popScope),
-						ctx.file,
-						sc.line,
-						sc.col,
-						t.lines[sc.line]
-					);
+						instructions.append(
+							instruction(rs_instruction::popScope),
+							ctx.file,
+							t.line(),
+							t.col(),
+							t.lines[t.line()]
+						);
+					}
 
-					u64 fail_address = instructions.count();
-					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &fail_address);
+					integer_type fail_address = instructions.count() + 1;
+					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
 					branch.arg(fail_addr_id);
+				}
+
+				instruction& jump_past_else = instructions.append(
+					instruction(rs_instruction::null_instruction),
+					ctx.file,
+					final_token.line,
+					final_token.col,
+					t.lines[final_token.line]
+				);
+				token else_kw = t.keyword(false, "else");
+				if (else_kw.valid()) {
+					auto block_open = t.character('{', false);
+					if (block_open.valid()) {
+						ctx.push_locals();
+						token closed;
+						while (!t.at_end()) {
+							closed = t.character('}', false);
+							if (closed.valid()) break;
+							compile_statement(t, ctx, instructions);
+						}
+						if (!closed.valid()) {
+							throw parse_exception(
+								"Encountered unexpected end of input while parsing 'else' statement body",
+								ctx.file,
+								t.lines[block_open.line],
+								block_open.line,
+								block_open.col
+							);
+						}
+
+						instructions.append(
+							instruction(rs_instruction::popScope),
+							ctx.file,
+							closed.line,
+							closed.col,
+							t.lines[closed.line]
+						);
+
+						integer_type after_pass_address = instructions.count() + 1;
+						variable_id after_pass_address_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &after_pass_address);
+						jump_past_else.arg(after_pass_address_id);
+						jump_past_else.code = rs_instruction::jump;
+						ctx.pop_locals();
+					} else {
+						compile_statement(t, ctx, instructions, false);
+
+						if (parseSemicolon) {
+							auto sc = t.semicolon();
+							instructions.append(
+								instruction(rs_instruction::popScope),
+								ctx.file,
+								sc.line,
+								sc.col,
+								t.lines[sc.line]
+							);
+						} else {
+							instructions.append(
+								instruction(rs_instruction::popScope),
+								ctx.file,
+								t.line(),
+								t.col(),
+								t.lines[t.line()]
+							);
+						}
+
+						integer_type after_pass_address = instructions.count();
+						variable_id after_pass_address_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &after_pass_address);
+						jump_past_else.arg(after_pass_address_id);
+						jump_past_else.code = rs_instruction::jump;
+					}
 				}
 
 				ctx.current_scope_idx--;
 			}
 			else if (kw.text == "while") {
 				ctx.current_scope_idx++;
-				u64 expr_address = instructions.count() + 1;
-				variable_id expr_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &expr_address);
+				integer_type expr_address = instructions.count() + 1;
+				variable_id expr_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &expr_address);
 
 				t.character('(');
 				compile_expression(t, ctx, instructions, true);
 				t.character(')');
 
-				u64 pass_address = instructions.count() + 1;
-				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &pass_address);
+				integer_type pass_address = instructions.count() + 1;
+				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &pass_address);
 
 				instruction& branch = instructions.append(
 					instruction(rs_instruction::branch).arg(rs_register::rvalue).arg(pass_addr_id),
@@ -695,8 +842,8 @@ namespace rs {
 					t.lines[kw.line]
 				);
 
-				u64 fail_address = instructions.count();
-				variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &fail_address);
+				integer_type fail_address = instructions.count();
+				variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
 				branch.arg(fail_addr_id);
 
 				ctx.current_scope_idx--;
@@ -717,8 +864,8 @@ namespace rs {
 				if (!sc.valid()) {
 					compile_statement(t, ctx, instructions);
 				}
-				u64 expr_address = instructions.count();
-				variable_id expr_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &expr_address);
+				integer_type expr_address = instructions.count();
+				variable_id expr_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &expr_address);
 
 				sc = t.semicolon(false);
 				if (!sc.valid()) {
@@ -726,8 +873,8 @@ namespace rs {
 					t.semicolon();
 				}
 
-				u64 pass_address = instructions.count() + 1;
-				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &pass_address);
+				integer_type pass_address = instructions.count() + 1;
+				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &pass_address);
 
 				instruction& branch = instructions.append(
 					instruction(rs_instruction::branch).arg(rs_register::rvalue).arg(pass_addr_id),
@@ -770,8 +917,8 @@ namespace rs {
 						t.lines[closed.line]
 					);
 
-					u64 fail_address = instructions.count();
-					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &fail_address);
+					integer_type fail_address = instructions.count();
+					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
 					branch.arg(fail_addr_id);
 
 					instructions.append(
@@ -793,8 +940,8 @@ namespace rs {
 						t.lines[sc.valid() ? sc.line : t.line()]
 					);
 
-					u64 fail_address = instructions.count();
-					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_uint64, sizeof(u64), &fail_address);
+					integer_type fail_address = instructions.count();
+					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
 					branch.arg(fail_addr_id);
 
 					instructions.append(
@@ -883,6 +1030,15 @@ namespace rs {
 				if (!uninitialized) compile_expression(t, ctx, instructions, true);
 				if (parseSemicolon) t.character(';');
 			}
+			else if (kw.text == "else") {
+				throw parse_exception(
+					"Encountered 'else' without an 'if'",
+					ctx.file,
+					t.lines[kw.line],
+					kw.line,
+					kw.col
+				);
+			}
 			else return false;
 
 			return true;
@@ -917,18 +1073,27 @@ namespace rs {
 				prop_name.text.length(),
 				(void*)prop_name.text.c_str()
 			);
-			auto i = instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(vid);
-			instructions.append(
-				i,
+
+			instruction& prop = instructions.append(
+				instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(vid),
 				ctx.file,
 				prop_name.line,
 				prop_name.col,
 				t.lines[prop_name.line]
 			);
 
-			compile_identifier(var_ref(m_script_context, tokenizer::token(), false), tokenizer::token(), t, ctx, instructions);
-			// lvalue will now be pointing to the accessed variable at the
-			// end of the accessor path
+
+			t.backup_state();
+			token assignment = t.keyword(false, "=");
+			t.restore_state();
+			if (assignment.valid()) {
+				// this property on the object is being assigned
+				prop.code = rs_instruction::propAssign;
+			} else {
+				compile_identifier(var_ref(m_script_context, tokenizer::token(), false), tokenizer::token(), t, ctx, instructions);
+				// lvalue will now be pointing to the accessed variable at the
+				// end of the accessor path
+			}
 
 			return false;
 		}
@@ -937,12 +1102,7 @@ namespace rs {
 		if (index_open_operator.valid()) {
 			auto num = t.number_constant(false);
 			if (num.valid()) {
-				u32 idx = atoll(num.text.c_str());
-				variable_id vid = m_script_context->memory->set_static(
-					rs_builtin_type::t_uint32,
-					sizeof(u32),
-					(void*)(&idx)
-				);
+				variable_id vid = define_static_string(m_script_context, num.text);
 				auto i = instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(vid);
 				instructions.append(
 					i,
@@ -953,13 +1113,9 @@ namespace rs {
 				);
 				t.character(']');
 			} else {
-				auto str = t.string_constant(false);
+				auto str = t.string_constant(false, true, false);
 				if (str.valid()) {
-					variable_id vid = m_script_context->memory->set_static(
-						rs_builtin_type::t_string,
-						str.text.length(),
-						(void*)str.text.c_str()
-					);
+					variable_id vid = define_static_string(m_script_context, str.text);
 
 					instructions.append(
 						instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(vid),
@@ -983,28 +1139,29 @@ namespace rs {
 					t.character(']');
 
 					instructions.append(
-						instruction(rs_instruction::move).arg(rs_register::return_value).arg(rs_register::rvalue),
+						instruction(rs_instruction::popState).arg(rs_register::rvalue),
 						ctx.file,
 						index_open_operator.line,
 						index_open_operator.col,
 						t.lines[index_open_operator.line]
 					);
 
-					instructions.append(
-						instruction(rs_instruction::popState),
+					instruction& prop = instructions.append(
+						instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(rs_register::rvalue),
 						ctx.file,
 						index_open_operator.line,
 						index_open_operator.col,
 						t.lines[index_open_operator.line]
 					);
 
-					instructions.append(
-						instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(rs_register::return_value),
-						ctx.file,
-						index_open_operator.line,
-						index_open_operator.col,
-						t.lines[index_open_operator.line]
-					);
+					t.backup_state();
+					token assignment = t.keyword(false, "=");
+					t.restore_state();
+
+					if (assignment.valid()) {
+						// this property on the object is being assigned
+						prop.code = rs_instruction::propAssign;
+					}
 				}
 			}
 
@@ -1012,5 +1169,119 @@ namespace rs {
 		}
 
 		return variable.is_const;
+	}
+
+	bool script_compiler::compile_json(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected) {
+		t.backup_state();
+		token obj_open = t.character('{', expected);
+		if (!obj_open.valid()) return false;
+
+		instructions.append(
+			instruction(rs_instruction::pushState),
+			ctx.file,
+			obj_open.line,
+			obj_open.col,
+			t.lines[obj_open.line]
+		);
+
+		instructions.append(
+			instruction(rs_instruction::newObj),
+			ctx.file,
+			obj_open.line,
+			obj_open.col,
+			t.lines[obj_open.line]
+		);
+
+		token obj_close = t.character('}', false);
+		bool maybe_not_json = !expected;
+		while (!t.at_end() && !obj_close.valid()) {
+			token propName = t.identifier(false);
+			if (!propName.valid()) propName = t.number_constant(false);
+			if (!propName.valid()) propName = t.string_constant(!maybe_not_json, true, false);
+			if (!propName.valid()) {
+				// can only happen if this isn't a JSON object
+				t.restore_state();
+				return false;
+			}
+
+			variable_id prop_name_id = define_static_string(m_script_context, propName.text);
+
+			token assign = t.character(':', !maybe_not_json);
+			if (!assign.valid()) {
+				// can only happen if this isn't a JSON object
+				t.restore_state();
+				return false;
+			}
+
+			instructions.append(
+				instruction(rs_instruction::pushState),
+				ctx.file,
+				assign.line,
+				assign.col,
+				t.lines[assign.line]
+			);
+
+			compile_expression(t, ctx, instructions, true);
+
+			instructions.append(
+				instruction(rs_instruction::popState).arg(rs_register::rvalue),
+				ctx.file,
+				assign.line,
+				assign.col,
+				t.lines[assign.line]
+			);
+
+			instructions.append(
+				instruction(rs_instruction::pushState),
+				ctx.file,
+				assign.line,
+				assign.col,
+				t.lines[assign.line]
+			);
+			instructions.append(
+				instruction(rs_instruction::propAssign).arg(rs_register::lvalue).arg(prop_name_id),
+				ctx.file,
+				assign.line,
+				assign.col,
+				t.lines[assign.line]
+			);
+			instructions.append(
+				instruction(rs_instruction::store).arg(rs_register::lvalue).arg(rs_register::rvalue),
+				ctx.file,
+				assign.line,
+				assign.col,
+				t.lines[assign.line]
+			);
+			instructions.append(
+				instruction(rs_instruction::popState),
+				ctx.file,
+				assign.line,
+				assign.col,
+				t.lines[assign.line]
+			);
+
+			obj_close = t.character('}', false);
+		}
+
+		if (!obj_close.valid()) {
+			throw parse_exception(
+				"Encountered unexpected end of input while parsing object body",
+				ctx.file,
+				t.lines[obj_open.line],
+				obj_open.line,
+				obj_open.col
+			);
+		}
+
+		instructions.append(
+			instruction(rs_instruction::popState).arg(rs_register::lvalue),
+			ctx.file,
+			obj_close.line,
+			obj_close.col,
+			t.lines[obj_close.line]
+		);
+
+		t.commit_state();
+		return true;
 	}
 };

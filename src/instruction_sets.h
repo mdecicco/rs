@@ -4,5 +4,6 @@
 namespace rs {
 	class context;
 	void add_default_instruction_set(context* ctx);
-	void add_i32_instruction_set(context* ctx);
+	void add_number_instruction_set(context* ctx);
+	void add_object_instruction_set(context* ctx);
 };

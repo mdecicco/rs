@@ -1,4 +1,5 @@
 #include <instruction_array.h>
+#include <parse_utils.h>
 using namespace std;
 
 namespace rs {
@@ -69,6 +70,16 @@ namespace rs {
 	}
 
 	instruction_array::instruction& instruction_array::append(const instruction& i, const string& file, u32 line, u32 col, const string& lineText) {
+		if (m_count + 1 > rs_integer_max) {
+			throw parse_exception(
+				format("Script compiler was configured to use integers that are too small to contain more than %llu instructions. Update the configuration and recompile to increase the instruction capacity.", rs_integer_max),
+				file,
+				lineText,
+				line,
+				col
+			);
+		}
+
 		if (m_count + 1 == m_capacity) {
 			instruction* newArr = new instruction[m_capacity + m_blockSize];
 			memcpy(newArr, m_arr, sizeof(instruction) * m_count);

@@ -56,7 +56,7 @@ namespace rs {
 			token keyword(bool expected = true, const std::string& kw = "");
 			token identifier(bool expected = true, const std::string& identifier = "");
 			token character(char c, bool expected = true);
-			token string_constant(bool expected = true);
+			token string_constant(bool expected = true, bool strip_quotes = false, bool allow_empty = true);
 			token number_constant(bool expected = true);
 
 			std::vector<std::string> lines;
