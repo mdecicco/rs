@@ -2,7 +2,7 @@
 
 #include <execution_state.h>
 #include <context.h>
-#include <object.h>
+#include <script_object.h>
 
 std::string var_to_string(rs::context_memory::mem_var& v) {
 	std::string val;

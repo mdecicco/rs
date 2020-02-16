@@ -1,8 +1,6 @@
 #pragma once
-#include <string>
 
 namespace rs {
-	class script_string : public std::string {
-		public:
-	};
+	class context;
+	void bind_script_string(context* ctx);
 }

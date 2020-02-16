@@ -1,6 +1,6 @@
 #include <execution_state.h>
 #include <context.h>
-#include <object.h>
+#include <script_object.h>
 
 namespace rs {
 	std::string v2s(rs::context_memory::mem_var& v) {

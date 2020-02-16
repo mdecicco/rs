@@ -1,4 +1,4 @@
-#include <object.h>
+#include <script_object.h>
 using namespace std;
 
 namespace rs {

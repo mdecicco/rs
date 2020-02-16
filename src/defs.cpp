@@ -1,5 +1,5 @@
 #include <defs.h>
-#include <object.h>
+#include <script_object.h>
 #define max(a, b) ((a) > (b) ? (a) : (b))
 namespace rs {
 	const size_t max_variable_size = max(

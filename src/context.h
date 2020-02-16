@@ -38,28 +38,13 @@ namespace rs {
 
 	typedef void (*instruction_callback)(execution_state*, instruction_array::instruction*);
 
-	class context;
-
 	struct variable {
 		variable_id id;
 		tokenizer::token name;
 		bool is_const;
 	};
 
-	class function {
-		public:
-			function(context* ctx, const tokenizer::token& name, variable_id entry_point_id);
-			~function();
-
-			tokenizer::token name;
-			u64 entry_point;
-			variable_id entry_point_id;
-			dynamic_pod_array<variable_id> declared_vars;
-			std::vector<variable> params;
-
-		protected:
-			context* m_ctx;
-	};
+	class script_function;
 
 	class context {
 		public:
@@ -84,7 +69,7 @@ namespace rs {
 			script_compiler* compiler;
 			context_memory* memory;
 
-			std::vector<function*> global_functions;
+			std::vector<script_function*> global_functions;
 			std::vector<variable> global_variables;
 
 		protected:

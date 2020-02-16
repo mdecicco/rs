@@ -25,16 +25,17 @@ namespace rs {
 			};
 			typedef std::vector<var_ref> ref_vec;
 
-			struct script_function {
+			struct function_ref {
 				tokenizer::token name;
 				ref_vec params;
+				variable_id function_id;
 				variable_id instruction_offset;
 				u64 instruction_count;
 				ref_vec declared_vars;
 				ref_vec referenced_vars;
 				std::vector<u32> reference_counts;
 			};
-			typedef std::vector<script_function*> func_vec;
+			typedef std::vector<function_ref*> func_vec;
 
 			struct parse_context {
 				std::string file;
@@ -44,19 +45,20 @@ namespace rs {
 				u8 current_scope_idx;
 				context* ctx;
 
-				script_function* currentFunction;
+				function_ref* currentFunction;
 
 				void push_locals();
 				void pop_locals();
 				var_ref var(const std::string& name);
-				script_function* func(const std::string& name);
+				variable_id func(const std::string& name);
 			};
 
 			bool compile(const std::string& code, instruction_array& instructions);
 			
 		protected:
 			context* m_script_context;
-			script_function* compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions);
+			void initialize_tokenizer(tokenizer& t);
+			function_ref* compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions);
 			bool compile_expression(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 			bool compile_statement(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool parseSemicolon = true);
 			bool compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions);

@@ -1,7 +1,8 @@
 #include <compiler.h>
 #include <context.h>
 #include <parse_utils.h>
-#include <object.h>
+#include <script_object.h>
+#include <script_function.h>
 using namespace std;
 
 namespace rs {
@@ -120,30 +121,67 @@ namespace rs {
 		return var_ref(nullptr, t, false);
 	}
 
-	script_compiler::script_function* script_compiler::parse_context::func(const string& name) {
+	variable_id script_compiler::parse_context::func(const string& name) {
 		for (auto* func : functions) {
-			if (func->name.text == name) return func;
+			if (func->name.text == name) return func->function_id;
 		}
 
 		for (auto* func : ctx->global_functions) {
 			if (func->name.text == name) {
-				auto* nf = new script_compiler::script_function;
-				nf->instruction_offset = func->entry_point_id;
-				nf->name = func->name;
-				for (auto& p : func->params) {
-					nf->params.push_back(var_ref(p));
-				}
-				return nf;
+				return func->function_id;
 			}
 		}
 		
-		return nullptr;
+		return 0;
 	}
 
 
 
 	bool script_compiler::compile(const std::string& code, instruction_array& instructions) {
 		tokenizer t("test", code);
+		initialize_tokenizer(t);
+
+		instructions.backup();
+		try {
+			parse_context ctx;
+			ctx.ctx = m_script_context;
+			ctx.currentFunction = nullptr;
+			ctx.file = "test";
+			ctx.current_scope_idx = 0;
+			ctx.push_locals();
+
+			while (!t.at_end()) {
+				function_ref* func = compile_function(t, ctx, instructions);
+				if (func) {
+					ctx.functions.push_back(func);
+					auto f = new script_function(m_script_context, func->name, func->instruction_offset);
+					f->function_id = func->function_id;
+					for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
+					for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
+					m_script_context->memory->get(func->function_id).data = f;
+
+					m_script_context->global_functions.push_back(f);
+					continue;
+				}
+
+				compile_statement(t, ctx, instructions);
+			}
+
+			ctx.pop_locals();
+
+			instructions.commit();
+			return true;
+		} catch (const parse_exception& e) {
+			printf("%s:%d:%d: %s\n%s\n", e.file.c_str(), e.line + 1, e.col + 1, e.text.c_str(), e.lineText.c_str());
+			for (i64 c = 0;c < i64(e.col);c++) printf(" ");
+			printf("^\n");
+			instructions.restore();
+		}
+
+		return false;
+	}
+
+	void script_compiler::initialize_tokenizer(tokenizer& t) {
 		t.specify_keyword("function");
 		t.specify_keyword("return");
 		t.specify_keyword("this");
@@ -159,6 +197,7 @@ namespace rs {
 		t.specify_keyword("export");
 		t.specify_keyword("continue");
 		t.specify_keyword("break");
+		t.specify_keyword("new");
 		t.specify_keyword("?");
 		t.specify_keyword(":");
 		t.specify_keyword("+");
@@ -186,46 +225,9 @@ namespace rs {
 		t.specify_keyword("&&");
 		t.specify_keyword("||");
 		t.specify_keyword("=>");
-
-		instructions.backup();
-		try {
-			parse_context ctx;
-			ctx.ctx = m_script_context;
-			ctx.currentFunction = nullptr;
-			ctx.file = "test";
-			ctx.current_scope_idx = 0;
-			ctx.push_locals();
-
-			while (!t.at_end()) {
-				script_function* func = compile_function(t, ctx, instructions);
-				if (func) {
-					ctx.functions.push_back(func);
-					auto f = new function(m_script_context, func->name, func->instruction_offset);
-					for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
-					for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
-
-					m_script_context->global_functions.push_back(f);
-					continue;
-				}
-
-				compile_statement(t, ctx, instructions);
-			}
-
-			ctx.pop_locals();
-
-			instructions.commit();
-			return true;
-		} catch (const parse_exception& e) {
-			printf("%s:%d:%d: %s\n%s\n", e.file.c_str(), e.line + 1, e.col + 1, e.text.c_str(), e.lineText.c_str());
-			for (i64 c = 0;c < i64(e.col);c++) printf(" ");
-			printf("^\n");
-			instructions.restore();
-		}
-
-		return false;
 	}
 
-	script_compiler::script_function* script_compiler::compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions) {
+	script_compiler::function_ref* script_compiler::compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions) {
 		auto func_kw = t.keyword(false, "function");
 		if (!func_kw.valid()) return nullptr;
 
@@ -257,7 +259,8 @@ namespace rs {
 		auto close_params = t.character(')');
 		auto body_open = t.character('{');
 
-		script_function* func = new script_function;
+		function_ref* func = new function_ref;
+		func->function_id = m_script_context->memory->set_static(rs_builtin_type::t_function, sizeof(script_function*), nullptr);
 		func->name = func_name;
 		func->params = params;
 		func->instruction_offset = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &first_instruction);
@@ -304,7 +307,7 @@ namespace rs {
 
 		bool is_const = true;
 		var_ref var = ctx.var("");
-		script_function* func = nullptr;
+		variable_id func = 0;
 		token const_token;
 		token identifier;
 
@@ -450,7 +453,7 @@ namespace rs {
 			}
 
 			instructions.append(
-				instruction(rs_instruction::call).arg(func->instruction_offset),
+				instruction(rs_instruction::call).arg(func),
 				ctx.file,
 				pclose.line,
 				pclose.col,
@@ -971,10 +974,25 @@ namespace rs {
 					);
 				}
 
-				script_function* func = ctx.func(var_name.text);
+				variable_id func = ctx.func(var_name.text);
 				if (func) {
+					token func_name;
+					for (auto* func : ctx.functions) {
+						if (func->name.text == var_name.text) {
+							func_name = func->name;
+							break;
+						}
+					}
+
+					for (auto* func : m_script_context->global_functions) {
+						if (func->name.text == var_name.text) {
+							func_name = func->name;
+							break;
+						}
+					}
+
 					throw parse_exception(
-						format("Cannot redeclare '%s', previous definition is on %s:%d", var_name.text.c_str(), func->name.file.c_str(), func->name.line + 1),
+						format("Cannot redeclare '%s', previous definition is on %s:%d", var_name.text.c_str(), func_name.file.c_str(), func_name.line + 1),
 						ctx.file,
 						t.lines[var_name.line],
 						var_name.line,
@@ -1012,10 +1030,25 @@ namespace rs {
 					);
 				}
 
-				script_function* func = ctx.func(var_name.text);
+				variable_id func = ctx.func(var_name.text);
 				if (func) {
+					token func_name;
+					for (auto* func : ctx.functions) {
+						if (func->name.text == var_name.text) {
+							func_name = func->name;
+							break;
+						}
+					}
+
+					for (auto* func : m_script_context->global_functions) {
+						if (func->name.text == var_name.text) {
+							func_name = func->name;
+							break;
+						}
+					}
+
 					throw parse_exception(
-						format("Cannot redeclare '%s', previous definition is on %s:%d", var_name.text.c_str(), func->name.file.c_str(), func->name.line + 1),
+						format("Cannot redeclare '%s', previous definition is on %s:%d", var_name.text.c_str(), func_name.file.c_str(), func_name.line + 1),
 						ctx.file,
 						t.lines[var_name.line],
 						var_name.line,

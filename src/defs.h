@@ -111,6 +111,12 @@ namespace rs {
 	typedef uint8_t		u8;
 	typedef uint16_t	type_id;
 
+	inline bool type_is_ptr(type_id type) {
+		return 
+			type == rs_builtin_type::t_object
+			|| type == rs_builtin_type::t_function;
+	}
+
 	#ifdef SCRIPTS_USE_64BIT_INTEGERS
 		typedef i64	integer_type;
 		#define rs_integer_max INT64_MAX

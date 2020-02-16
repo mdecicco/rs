@@ -1,7 +1,8 @@
 #include <context.h>
 #include <instruction_sets.h>
 #include <execution_state.h>
-#include <object.h>
+#include <script_object.h>
+#include <script_string.h>
 using namespace std;
 
 namespace rs {
@@ -26,7 +27,7 @@ namespace rs {
 	void context_memory::set(variable_id id, type_id type, size_t size, void* data) {
 		if (m_vars.count(id) == 0) {
 			u8* d = nullptr;
-			if (type == rs_builtin_type::t_object) d = (u8*)data;
+			if (type_is_ptr(type)) d = (u8*)data;
 			else {
 				d = new u8[max_variable_size];
 				if (size > 0) memcpy(d, data, size);
@@ -34,16 +35,15 @@ namespace rs {
 			m_vars[id] = { d, size, type, false };
 		} else {
 			auto& v = m_vars[id];
-			if (type == rs_builtin_type::t_object) {
-				if (v.type == rs_builtin_type::t_object) v.data = data;
+
+			if (type_is_ptr(type)) {
+				if (type_is_ptr(v.type)) v.data = (u8*)data;
 				else {
 					delete [] v.data;
-					v.data = data;
+					v.data = (u8*)data;
 				}
 			} else {
-				if (v.type == rs_builtin_type::t_object) {
-					v.data = new u8[max_variable_size];
-				}
+				if (type_is_ptr(v.type)) v.data = new u8[max_variable_size];
 				if (size > 0) memcpy(v.data, data, size);
 			}
 			
@@ -54,7 +54,7 @@ namespace rs {
 
 	variable_id context_memory::set(type_id type, size_t size, void* data) {
 		u8* d = nullptr;
-		if (type == rs_builtin_type::t_object) d = (u8*)data;
+		if (type_is_ptr(type)) d = (u8*)data;
 		else {
 			d = new u8[max_variable_size];
 			if (size > 0) memcpy(d, data, size);
@@ -66,7 +66,7 @@ namespace rs {
 
 	variable_id context_memory::set_static(type_id type, size_t size, void* data) {
 		u8* d = nullptr;
-		if (type == rs_builtin_type::t_object) d = (u8*)data;
+		if (type_is_ptr(type)) d = (u8*)data;
 		else {
 			d = new u8[max_variable_size];
 			if (size > 0) memcpy(d, data, size);
@@ -103,16 +103,6 @@ namespace rs {
 	}
 
 
-	function::function(context* ctx, const tokenizer::token& _name, variable_id entry_id) {
-		m_ctx = ctx;
-		name = _name;
-		entry_point_id = entry_id;
-		entry_point = *(u64*)ctx->memory->get(entry_id).data;
-	}
-
-	function::~function() {
-	}
-
 
 	context::context(context_parameters& params) {
 		params.ctx = this;
@@ -124,6 +114,8 @@ namespace rs {
 		add_number_instruction_set(this);
 		add_object_instruction_set(this);
 		memcpy(&m_params, &params, sizeof(context_parameters));
+
+		bind_script_string(this);
 	}
 
 	context::~context() {
@@ -146,7 +138,7 @@ namespace rs {
 			if (ret.size) {
 				result.type = ret.type;
 				result.size = ret.size;
-				if (ret.type == rs_builtin_type::t_object) result.data = ret.data;
+				if (type_is_ptr(ret.type)) result.data = ret.data;
 				else {
 					result.data = new u8[ret.size];
 					memcpy(result.data, ret.data, ret.size);

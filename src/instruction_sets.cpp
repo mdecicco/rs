@@ -1,7 +1,8 @@
 #include <instruction_sets.h>
 #include <context.h>
 #include <execution_state.h>
-#include <object.h>
+#include <script_object.h>
+#include <script_function.h>
 using namespace std;
 
 #define max(a, b) ((a) < (b) ? (b) : (a))
@@ -227,13 +228,30 @@ namespace rs {
 	inline void df_call(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
-		vstore(ctx, registers[rs_register::return_address], registers[rs_register::instruction_address]);
-		
-		state->push_state();
-		state->push_scope();
+		script_function* func = (script_function*)ctx->memory->get(i->args[0].var).data;
+		if (func->cpp_callback) {
+			script_object* this_obj = nullptr;
+			variable_id this_obj_id = registers[rs_register::this_obj];
+			if (this_obj_id != 0) {
+				mem_var& obj = ctx->memory->get(this_obj_id);
+				if (obj.type == rs_builtin_type::t_object) this_obj = (script_object*)obj.data;
+			}
 
-		vstore(ctx, registers[rs_register::instruction_address], i->args[0].var);
+			func_args args;
+			for (u8 arg = 0;arg < 8;arg++) {
+				variable_id arg_id = registers[rs_register::parameter0 + arg];
+				args.push(ctx->memory->get(arg_id));
+			}
+
+			registers[rs_register::return_value] = func->cpp_callback(this_obj, &args);
+		} else {
+			vstore(ctx, registers[rs_register::return_address], registers[rs_register::instruction_address]);
 		
+			state->push_state();
+			state->push_scope();
+		
+			vstore(ctx, registers[rs_register::instruction_address], func->entry_point_id);
+		}
 	}
 	inline void df_jump(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
