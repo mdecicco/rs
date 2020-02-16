@@ -52,10 +52,12 @@ namespace rs {
 	}
 
 	variable_id define_static_string(context* ctx, const string& t) {
+		char* str = new char[t.length()];
+		memcpy(str, t.c_str(), t.length());
 		return ctx->memory->set_static(
 			rs_builtin_type::t_string,
 			t.length(),
-			(void*)t.c_str()
+			(void*)str
 		);
 	}
 
@@ -397,7 +399,7 @@ namespace rs {
 
 		// populate lvalue
 		if (var.id || var.reg != rs_register::null_register) {
-			// variable
+			// variable or call to function stored in variable
 			is_const = compile_identifier(var, identifier, t, ctx, instructions);
 			if (ctx.currentFunction) {
 				bool found = false;
@@ -414,67 +416,64 @@ namespace rs {
 					ctx.currentFunction->reference_counts.push_back(1);
 				}
 			}
+
+			if (compile_parameter_list(t, ctx, instructions, false)) {
+				// call to function stored in variable
+				is_const = true;
+
+				instructions.append(
+					instruction(rs_instruction::call).arg(rs_register::lvalue),
+					ctx.file,
+					identifier.line,
+					identifier.col,
+					t.lines[identifier.line]
+				);
+
+				instructions.append(
+					instruction(rs_instruction::move).arg(rs_register::lvalue).arg(rs_register::return_value),
+					ctx.file,
+					identifier.line,
+					identifier.col,
+					t.lines[identifier.line]
+				);
+			}
 		}
 		else if (func) {
-			// function call
-			token popen = t.character('(');
+			if (compile_parameter_list(t, ctx, instructions, false)) {
+				// function call
+				instructions.append(
+					instruction(rs_instruction::call).arg(func),
+					ctx.file,
+					identifier.line,
+					identifier.col,
+					t.lines[identifier.line]
+				);
 
-			instructions.append(
-				instruction(rs_instruction::pushState),
-				ctx.file,
-				popen.line,
-				popen.col,
-				t.lines[popen.line]
-			);
+				instructions.append(
+					instruction(rs_instruction::popState),
+					ctx.file,
+					identifier.line,
+					identifier.col,
+					t.lines[identifier.line]
+				);
 
-			token pclose;
-			token comma;
-			for (u8 p = 0;p < 8;p++) {
-				if (!pclose.valid()) pclose = t.character(')', false);
-				if (!pclose.valid() && compile_expression(t, ctx, instructions, comma.valid() || !pclose.valid())) {
-					comma = t.character(',', false);
-					pclose = t.character(')', !comma.valid());
-					instructions.append(
-						instruction(rs_instruction::move).arg(rs_register(rs_register::parameter0 + p)).arg(rs_register::rvalue),
-						ctx.file,
-						(comma.valid() ? comma : pclose).line,
-						(comma.valid() ? comma : pclose).col,
-						t.lines[(comma.valid() ? comma : pclose).line]
-					);
-				} else {
-					instructions.append(
-						instruction(rs_instruction::move).arg(rs_register(rs_register::parameter0 + p)).arg(variable_id(0)),
-						ctx.file,
-						popen.line,
-						popen.col,
-						t.lines[popen.line]
-					);
-				}
+				instructions.append(
+					instruction(rs_instruction::move).arg(rs_register::lvalue).arg(rs_register::return_value),
+					ctx.file,
+					identifier.line,
+					identifier.col,
+					t.lines[identifier.line]
+				);
+			} else {
+				// function reference
+				instructions.append(
+					instruction(rs_instruction::move).arg(rs_register::lvalue).arg(func),
+					ctx.file,
+					identifier.line,
+					identifier.col,
+					t.lines[identifier.line]
+				);
 			}
-
-			instructions.append(
-				instruction(rs_instruction::call).arg(func),
-				ctx.file,
-				pclose.line,
-				pclose.col,
-				t.lines[pclose.line]
-			);
-
-			instructions.append(
-				instruction(rs_instruction::popState),
-				ctx.file,
-				pclose.line,
-				pclose.col,
-				t.lines[pclose.line]
-			);
-
-			instructions.append(
-				instruction(rs_instruction::move).arg(rs_register::lvalue).arg(rs_register::return_value),
-				ctx.file,
-				pclose.line,
-				pclose.col,
-				t.lines[pclose.line]
-			);
 		}
 		else if (popen.valid()) {
 			instructions.append(
@@ -516,7 +515,7 @@ namespace rs {
 					t.lines[const_token.line]
 				);
 			} else {
-				const_token = t.string_constant(false);
+				const_token = t.string_constant(false, true);
 				if (const_token.valid()) {
 					variable_id vid = define_static_string(m_script_context, const_token.text);
 					
@@ -1101,11 +1100,7 @@ namespace rs {
 		auto accessor_operator = t.character('.', false);
 		if (accessor_operator.valid()) {
 			auto prop_name = t.identifier();
-			variable_id vid = m_script_context->memory->set_static(
-				rs_builtin_type::t_string,
-				prop_name.text.length(),
-				(void*)prop_name.text.c_str()
-			);
+			variable_id vid = define_static_string(m_script_context, prop_name.text);
 
 			instruction& prop = instructions.append(
 				instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(vid),
@@ -1202,6 +1197,94 @@ namespace rs {
 		}
 
 		return variable.is_const;
+	}
+
+	bool script_compiler::compile_parameter_list(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected) {
+		if (!expected) {
+			t.backup_state();
+			instructions.backup();
+		}
+
+		token popen = t.character('(', expected);
+		if (!popen.valid()) {
+			t.restore_state();
+			instructions.restore();
+			return false;
+		}
+
+		instructions.append(
+			instruction(rs_instruction::pushState),
+			ctx.file,
+			popen.line,
+			popen.col,
+			t.lines[popen.line]
+		);
+
+		token pclose;
+		token comma;
+		for (u16 p = 0;p < 128;p++) {
+			if (p >= 8) {
+				throw parse_exception(
+					"Functions can only have up to 8 parameters",
+					ctx.file,
+					t.lines[comma.line],
+					comma.line,
+					comma.col
+				);
+			}
+
+			if (!pclose.valid()) pclose = t.character(')', false);
+
+			bool try_compile = !pclose.valid();
+			if (try_compile) {
+				instructions.backup();
+				instructions.append(
+					instruction(rs_instruction::pushState),
+					ctx.file,
+					popen.line,
+					popen.col,
+					t.lines[popen.line]
+				);
+			}
+			bool compiled = try_compile && compile_expression(t, ctx, instructions, comma.valid() || !pclose.valid());
+			if (compiled) {
+				instructions.commit();
+
+				comma = t.character(',', false);
+				pclose = t.character(')', !comma.valid());
+				instructions.append(
+					instruction(rs_instruction::popState).arg(rs_register::rvalue),
+					ctx.file,
+					(comma.valid() ? comma : pclose).line,
+					(comma.valid() ? comma : pclose).col,
+					t.lines[(comma.valid() ? comma : pclose).line]
+				);
+				instructions.append(
+					instruction(rs_instruction::move).arg(rs_register(rs_register::parameter0 + p)).arg(rs_register::rvalue),
+					ctx.file,
+					(comma.valid() ? comma : pclose).line,
+					(comma.valid() ? comma : pclose).col,
+					t.lines[(comma.valid() ? comma : pclose).line]
+				);
+			} else {
+				if (try_compile) instructions.restore();
+
+				instructions.append(
+					instruction(rs_instruction::move).arg(rs_register(rs_register::parameter0 + p)).arg(variable_id(0)),
+					ctx.file,
+					popen.line,
+					popen.col,
+					t.lines[popen.line]
+				);
+				if (p == 7) break;
+			}
+		}
+
+		if (!expected) {
+			t.commit_state();
+			instructions.commit();
+		}
+		return true;
 	}
 
 	bool script_compiler::compile_json(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected) {

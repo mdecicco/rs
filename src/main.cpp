@@ -3,64 +3,7 @@
 #include <execution_state.h>
 #include <context.h>
 #include <script_object.h>
-
-std::string var_to_string(rs::context_memory::mem_var& v) {
-	std::string val;
-	if (!v.data) val = "undefined";
-	else {
-		switch (v.type) {
-			case rs::rs_builtin_type::t_string: {
-				val = std::string((char*)v.data, v.size);
-				break;
-			}
-			case rs::rs_builtin_type::t_integer: {
-				val = rs::format("%d", *(rs::integer_type*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_decimal: {
-				val = rs::format("%f", *(rs::decimal_type*)v.data);
-				break;
-			}
-			case rs::rs_builtin_type::t_bool: {
-				val = rs::format("%s", (*(bool*)v.data) ? "true" : "false");
-				break;
-			}
-			case rs::rs_builtin_type::t_class: {
-				val = "class";
-				break;
-			}
-			case rs::rs_builtin_type::t_function: {
-				val = "function";
-				break;
-			}
-			case rs::rs_builtin_type::t_object: {
-				rs::script_object* obj = (rs::script_object*)v.data;
-				auto properties = obj->properties();
-				val = "{ ";
-
-				rs::u32 i = 0;
-				for (auto& p : properties) {
-					if (i > 0) val += ", ";
-					val += p.name + ": " + var_to_string(obj->ctx()->memory->get(p.id));
-					i++;
-				}
-
-
-				if (i > 0) val += " ";
-
-				val += "}";
-
-				break;
-			}
-			default: {
-				val = "scripted type";
-				break;
-			}
-		}
-	}
-
-	return val;
-}
+#include <script_function.h>
 
 void print_instructions(const rs::context& ctx) {
 	const char* instructions[] = {
@@ -129,7 +72,7 @@ void print_instructions(const rs::context& ctx) {
 			if (inst.arg_is_register[a]) printf(" $%s", registers[inst.args[a].reg]);
 			else {
 				auto& v = ctx.memory->get(inst.args[a].var);
-				printf(" #%llu (%s)", inst.args[a].var, var_to_string(v).c_str());
+				printf(" #%llu (%s)", inst.args[a].var, rs::var_tostring(v).c_str());
 			}
 		}
 		printf("\n");
@@ -178,6 +121,20 @@ class test : public rs::script_object {
 		rs::integer_type value;
 };
 
+rs::variable_id test_func(rs::func_args* args) {
+	std::string str;
+	args->parameters.for_each([&str](rs::func_args::arg* arg) {
+		if (arg->id == 0) return false;
+
+		if (str.length() > 0) str += " ";
+		str += rs::var_tostring(arg->var);
+		return true;
+	});
+	rs::integer_type result = printf("%s\n", str.c_str());
+	
+	return args->context->memory->set(rs::rs_builtin_type::t_integer, sizeof(rs::integer_type), &result);
+}
+
 
 int main(int arg_count, const char** args) {
 	for(int i = 0;i < arg_count;i++) {
@@ -186,6 +143,7 @@ int main(int arg_count, const char** args) {
 
 	rs::context_parameters p;
 	rs::context ctx(p);
+	ctx.bind_function("test_print", test_func);
 	test t(&ctx);
 
 	ctx.add_code(
@@ -223,7 +181,7 @@ int main(int arg_count, const char** args) {
 		system("cls");
 		std::string code = input;
 		ctx.execute(code, result);
-		printf("result: %s\n", var_to_string(result).c_str());
+		printf("result: %s\n", var_tostring(result).c_str());
 	}
 
 	return 0;

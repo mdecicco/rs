@@ -59,10 +59,32 @@ namespace rs {
 		state->registers()[rs_register::lvalue] = ctx->memory->set(rs_builtin_type::t_object, sizeof(script_object*), new script_object(ctx));
 	}
 	inline void df_prop(execution_state* state, instruction* i) {
-		// runtime error
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		mem_var a;
+		if (i->arg_is_register[1]) a = ctx->memory->get(registers[i->args[1].reg]);
+		else a = ctx->memory->get(i->args[1].var);
+
+		throw runtime_exception(
+			format("'%s' is not an object", var_tostring(a).c_str()),
+			state,
+			*i
+		);
 	}
 	inline void df_propAssign(execution_state* state, instruction* i) {
-		// runtime error
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		mem_var a;
+		if (i->arg_is_register[1]) a = ctx->memory->get(registers[i->args[1].reg]);
+		else a = ctx->memory->get(i->args[1].var);
+
+		throw runtime_exception(
+			format("'%s' is not an object", var_tostring(a).c_str()),
+			state,
+			*i
+		);
 	}
 	inline void df_move(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
@@ -228,7 +250,11 @@ namespace rs {
 	inline void df_call(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
-		script_function* func = (script_function*)ctx->memory->get(i->args[0].var).data;
+		mem_var func_var;
+		if (i->arg_is_register[0]) func_var = ctx->memory->get(registers[i->args[0].reg]);
+		else func_var = ctx->memory->get(i->args[0].var);
+
+		script_function* func = (script_function*)func_var.data;
 		if (func->cpp_callback) {
 			script_object* this_obj = nullptr;
 			variable_id this_obj_id = registers[rs_register::this_obj];
@@ -238,12 +264,18 @@ namespace rs {
 			}
 
 			func_args args;
+			args.state = state;
+			args.context = ctx;
+			args.self = this_obj;
 			for (u8 arg = 0;arg < 8;arg++) {
 				variable_id arg_id = registers[rs_register::parameter0 + arg];
-				args.push(ctx->memory->get(arg_id));
+				args.parameters.push({
+					ctx->memory->get(arg_id),
+					arg_id
+				});
 			}
 
-			registers[rs_register::return_value] = func->cpp_callback(this_obj, &args);
+			registers[rs_register::return_value] = func->cpp_callback(&args);
 		} else {
 			vstore(ctx, registers[rs_register::return_address], registers[rs_register::instruction_address]);
 		
@@ -918,16 +950,22 @@ namespace rs {
 				break;
 			}
 			default: {
-				// runtime error
-				return;
+				throw runtime_exception(
+					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+					state,
+					*i
+				);
 			}
 		}
 
 		script_object* obj = (script_object*)a.data;
 		variable_id prop_id = obj->property(propName);
 		if (prop_id == 0) {
-			// runtime error
-			return;
+			throw runtime_exception(
+				format("Object has no property named '%s'", propName.c_str()),
+				state,
+				*i
+			);
 		}
 
 		registers[rs_register::lvalue] = prop_id;
@@ -956,8 +994,11 @@ namespace rs {
 				break;
 			}
 			default: {
-				// runtime error
-				return;
+				throw runtime_exception(
+					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+					state,
+					*i
+				);
 			}
 		}
 
@@ -968,6 +1009,75 @@ namespace rs {
 		}
 
 		registers[rs_register::lvalue] = prop_id;
+	}
+
+	inline void str_add(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
+		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		mem_var av = ctx->memory->get(a_id);
+		string a((char*)av.data, av.size);
+		string b = var_tostring(ctx->memory->get(b_id));
+		a += b;
+
+		char* result = new char[a.length()];
+		memcpy(result, a.c_str(), a.length());
+		registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_string, a.length(), result);
+	}
+	inline void str_addEq(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
+		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		mem_var& av = ctx->memory->get(a_id);
+		string a((char*)av.data, av.size);
+		string b = var_tostring(ctx->memory->get(b_id));
+		a += b;
+
+		char* result = new char[a.length()];
+		memcpy(result, a.c_str(), a.length());
+		registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_string, a.length(), result);
+
+		delete [] (char*)av.data;
+		av.data = new char[a.length()];
+		memcpy(av.data, a.c_str(), a.length());
+	}
+	inline void str_prop(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
+		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		mem_var a = ctx->memory->get(a_id);
+		mem_var b = ctx->memory->get(b_id);
+
+		integer_type idx = -1;
+		if (b.type == rs_builtin_type::t_integer) {
+			idx = *(integer_type*)b.data;
+		} else {
+			throw runtime_exception(
+				format("'%s' is not a valid string index", var_tostring(b).c_str()),
+				state,
+				*i
+			);
+			return;
+		}
+
+		if (idx < 0 || idx >= a.size) {
+			throw runtime_exception(
+				format("String index out of range"),
+				state,
+				*i
+			);
+			return;
+		}
+
+		char* result = new char[1];
+		*result = ((char*)a.data)[idx];
+		registers[rs_register::lvalue] = ctx->memory->set(rs_builtin_type::t_string, 1, result);
 	}
 
 
@@ -1028,5 +1138,11 @@ namespace rs {
 	void add_object_instruction_set(context* ctx) {
 		ctx->define_instruction(rs_builtin_type::t_object, rs_instruction::prop, obj_prop);
 		ctx->define_instruction(rs_builtin_type::t_object, rs_instruction::propAssign, obj_propAssign);
+	}
+
+	void add_string_instruction_set(context* ctx) {
+		ctx->define_instruction(rs_builtin_type::t_string, rs_instruction::prop, str_prop);
+		ctx->define_instruction(rs_builtin_type::t_string, rs_instruction::add, str_add);
+		ctx->define_instruction(rs_builtin_type::t_string, rs_instruction::addEq, str_addEq);
 	}
 };

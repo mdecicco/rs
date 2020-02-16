@@ -25,6 +25,7 @@ namespace rs {
 				} args[4];
 				bool arg_is_register[4];
 				u8 arg_count;
+				integer_type idx;
 			};
 
 			void backup();
@@ -43,7 +44,7 @@ namespace rs {
 				std::string lineText;
 			};
 
-			instruction_src instruction_source(u32 idx) const;
+			instruction_src instruction_source(integer_type idx) const;
 
 
 		protected:

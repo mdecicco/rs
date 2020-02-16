@@ -1,15 +1,25 @@
 #pragma once
-#include <context.h>
 #include <defs.h>
 #include <parse_utils.h>
 #include <dynamic_array.hpp>
+#include <context_memory.h>
+#include <context.h>
 
 namespace rs {
 	class context;
 	class script_object;
+	class execution_state;
 
-	typedef dynamic_pod_array<context_memory::mem_var> func_args;
-	typedef variable_id (*script_function_callback)(script_object*, const func_args*);
+	struct func_args {
+		script_object* self;
+		context* context;
+		execution_state* state;
+		struct arg {
+			context_memory::mem_var var;
+			variable_id id;
+		};
+		dynamic_pod_array<arg> parameters;
+	};
 
 	class script_function {
 		public:
@@ -18,11 +28,13 @@ namespace rs {
 			~script_function();
 
 			tokenizer::token name;
-			u64 entry_point;
+
+			integer_type entry_point;
 			variable_id function_id;
 			variable_id entry_point_id;
 			dynamic_pod_array<variable_id> declared_vars;
 			std::vector<variable> params;
+
 			script_function_callback cpp_callback;
 
 		protected:

@@ -94,6 +94,7 @@ namespace rs {
 
 		size_t idx = m_count++;
 		m_arr[idx] = i;
+		m_arr[idx].idx = idx;
 		internal_instruction_src src = {
 			0,
 			0,
@@ -132,7 +133,7 @@ namespace rs {
 		return m_arr[idx];
 	}
 
-	instruction_array::instruction_src instruction_array::instruction_source(u32 idx) const {
+	instruction_array::instruction_src instruction_array::instruction_source(integer_type idx) const {
 		instruction_src src;
 		src.col = m_srcMap[idx].col;
 		src.line = m_srcMap[idx].line;

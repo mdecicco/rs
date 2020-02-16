@@ -1,5 +1,9 @@
 #pragma once
 #include <stdint.h>
+#include <robin_hood.h>
+
+#define mvector std::vector
+#define munordered_map robin_hood::unordered_map
 
 namespace rs {
 	enum rs_instruction {
@@ -114,6 +118,7 @@ namespace rs {
 	inline bool type_is_ptr(type_id type) {
 		return 
 			type == rs_builtin_type::t_object
+			|| type == rs_builtin_type::t_string
 			|| type == rs_builtin_type::t_function;
 	}
 
@@ -158,4 +163,7 @@ namespace rs {
 			size_t max_size = 0;
 		} memory;
 	};
+
+	struct func_args;
+	typedef variable_id (*script_function_callback)(func_args*);
 };

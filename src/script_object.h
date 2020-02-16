@@ -23,7 +23,7 @@ namespace rs {
 			inline context* ctx() { return m_context; }
 
 		protected:
-			std::unordered_map<std::string, variable_id> m_props;
+			munordered_map<std::string, variable_id> m_props;
 			context* m_context;
 	};
 

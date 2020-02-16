@@ -1,63 +1,37 @@
 #include <execution_state.h>
 #include <context.h>
 #include <script_object.h>
+using namespace std;
 
 namespace rs {
-	std::string v2s(rs::context_memory::mem_var& v) {
-		std::string val;
-		if (!v.data) val = "undefined";
-		else {
-			switch (v.type) {
-				case rs::rs_builtin_type::t_string: {
-					val = std::string((char*)v.data, v.size);
-					break;
-				}
-				case rs::rs_builtin_type::t_integer: {
-					val = rs::format("%d", *(integer_type*)v.data);
-					break;
-				}
-				case rs::rs_builtin_type::t_decimal: {
-					val = rs::format("%f", *(decimal_type*)v.data);
-					break;
-				}
-				case rs::rs_builtin_type::t_bool: {
-					val = rs::format("%s", (*(bool*)v.data) ? "true" : "false");
-					break;
-				}
-				case rs::rs_builtin_type::t_class: {
-					val = "class";
-					break;
-				}
-				case rs::rs_builtin_type::t_function: {
-					val = "function";
-					break;
-				}
-				case rs::rs_builtin_type::t_object: {
-					script_object* obj = (script_object*)v.data;
-					auto properties = obj->properties();
-					val = "{ ";
+	runtime_exception::runtime_exception(const string& error, execution_state* state, const instruction_array::instruction& i) {
+		text = error;
+		auto src = state->ctx()->instructions->instruction_source(i.idx);
+		file = src.file;
+		line = src.line;
+		col = src.col;
+		lineText = src.lineText;
+		has_source_info = true;
+	}
 
-					u32 i = 0;
-					for (auto& p : properties) {
-						if (i > 0) val += ", ";
-						val += p.name + ": " + v2s(obj->ctx()->memory->get(p.id));
-						i++;
-					}
+	runtime_exception::runtime_exception(const string& error, execution_state* state) {
+		text = error;
 
-					if (i > 0) val += " ";
+		auto src = state->ctx()->instructions->instruction_source(state->instruction_addr());
+		file = src.file;
+		line = src.line;
+		col = src.col;
+		lineText = src.lineText;
+		has_source_info = true;
+	}
 
-					val += "}";
-
-					break;
-				}
-				default: {
-					val = "scripted type";
-					break;
-				}
-			}
-		}
-
-		return val;
+	runtime_exception::runtime_exception(const string& error) {
+		text = error;
+		file = "unknown";
+		line = 0;
+		col = 0;
+		lineText = "";
+		has_source_info = false;
 	}
 
 	execution_state::execution_state(const context_parameters& params, context* ctx) {
@@ -88,8 +62,10 @@ namespace rs {
 		m_last_printed_line = -1;
 		integer_type* iaddr = (integer_type*)m_ctx->memory->get(instruction_addr_id).data;
 		while ((*iaddr) < m_ctx->instructions->count()) {
-			auto& instruction = (*m_ctx->instructions)[(*iaddr)++];
-			print_instruction((*iaddr) - 1, instruction);
+			m_current_instruction_idx = (*iaddr)++;
+
+			auto& instruction = (*m_ctx->instructions)[m_current_instruction_idx];
+			print_instruction(m_current_instruction_idx, instruction);
 			if (instruction.code == rs_instruction::null_instruction) continue;
 
 			const context::instruction_set* iset = default_iset;
@@ -106,8 +82,11 @@ namespace rs {
 
 			if (icb) icb(this, &instruction);
 			else {
-				printf("woah there\n");
-				return;
+				throw runtime_exception(
+					"No instruction exists for this operation",
+					this,
+					instruction
+				);
 			}
 		}
 	}
@@ -118,8 +97,10 @@ namespace rs {
 
 	void execution_state::push_state() {
 		if (m_stack_idx == m_stack_depth - 1) {
-			printf("uh oh\n");
-			return;
+			throw runtime_exception(
+				"Maximum stack depth reached",
+				this
+			);
 		}
 
 		register_type* prev = m_stack[m_stack_idx++];
@@ -138,8 +119,10 @@ namespace rs {
 
 	void execution_state::pop_state(rs_register persist) {
 		if (m_stack_idx == 0) {
-			printf("oh boy\n");
-			return;
+			throw runtime_exception(
+				"Minimum stack depth reached",
+				this
+			);
 		}
 		register_type* prev = m_stack[m_stack_idx--];
 		register_type* now = m_stack[m_stack_idx];
@@ -231,11 +214,11 @@ namespace rs {
 			if (i.arg_is_register[a]) {
 				variable_id vid = registers()[i.args[a].reg];
 				auto& v = m_ctx->memory->get(vid);
-				printf(" $%s (#%llu) (%s)", rstr[i.args[a].reg], vid, v2s(v).c_str());
+				printf(" $%s (#%llu) (%s)", rstr[i.args[a].reg], vid, var_tostring(v).c_str());
 			}
 			else {
 				auto& v = m_ctx->memory->get(i.args[a].var);
-				printf(" #%llu (%s)", i.args[a].var, v2s(v).c_str());
+				printf(" #%llu (%s)", i.args[a].var, var_tostring(v).c_str());
 			}
 		}
 		printf("\n");

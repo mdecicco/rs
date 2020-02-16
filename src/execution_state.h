@@ -5,6 +5,23 @@
 
 namespace rs {
 	class context;
+	class execution_state;
+
+	class runtime_exception : public std::exception {
+		public:
+			runtime_exception(const std::string& error, execution_state* state, const instruction_array::instruction& i);
+			runtime_exception(const std::string& error, execution_state* state);
+			runtime_exception(const std::string& error);
+			~runtime_exception() { }
+
+			virtual const char* what() { return text.c_str(); }
+			std::string text;
+			std::string file;
+			std::string lineText;
+			u32 line;
+			u32 col;
+			bool has_source_info;
+	};
 
 	class execution_state {
 		public:
@@ -21,6 +38,7 @@ namespace rs {
 			void print_instruction(integer_type idx, const instruction_array::instruction& i);
 			inline context* ctx() { return m_ctx; }
 			inline register_type* registers() { return m_stack[m_stack_idx]; }
+			inline integer_type instruction_addr() const { return m_current_instruction_idx; }
 
 			struct scope {
 				dynamic_pod_array<variable_id> allocated_vars;
@@ -33,5 +51,6 @@ namespace rs {
 			size_t m_stack_idx;
 			size_t m_stack_depth;
 			context* m_ctx;
+			integer_type m_current_instruction_idx;
 	};
 };

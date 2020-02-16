@@ -1,13 +1,11 @@
 #pragma once
 #ifndef DONT_DECLARE_DYNAMIC_ARRAY
-#include <unordered_map>
 #include <vector>
 #include <assert.h>
+#include <defs.h>
 
 namespace rs {
 	typedef unsigned char u8;
-	#define mvector std::vector
-	#define munordered_map std::unordered_map
 
 	void* r2realloc(void* data, size_t old_size, size_t size);
 

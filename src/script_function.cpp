@@ -1,4 +1,5 @@
 #include <script_function.h>
+#include <context.h>
 using namespace std;
 
 namespace rs {
@@ -10,7 +11,7 @@ namespace rs {
 		entry_point = *(u64*)ctx->memory->get(entry_id).data;
 	}
 
-	script_function::script_function(context* ctx, const string& _name, function_callback cb) {
+	script_function::script_function(context* ctx, const string& _name, script_function_callback cb) {
 		m_ctx = ctx;
 		name = { 0, 0, _name, "internal" };
 		cpp_callback = cb;
