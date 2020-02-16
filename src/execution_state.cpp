@@ -48,11 +48,11 @@ namespace rs {
 		delete [] m_stack;
 	}
 
-	void execution_state::execute_all(integer_type entry_point) {
+	void execution_state::execute(integer_type entry_point, integer_type exit_point) {
 		integer_type instruction_addr = entry_point;
 		variable_id instruction_addr_id = m_ctx->memory->set(rs_builtin_type::t_integer, sizeof(integer_type), &instruction_addr);
 		registers()[rs_register::instruction_address] = instruction_addr_id;
-		integer_type return_addr = UINT64_MAX;
+		integer_type return_addr = rs_integer_max;
 		variable_id return_addr_id = m_ctx->memory->set(rs_builtin_type::t_integer, sizeof(integer_type), &return_addr);
 		registers()[rs_register::return_address] = return_addr_id;
 
@@ -60,18 +60,21 @@ namespace rs {
 
 		m_last_printed_col = -1;
 		m_last_printed_line = -1;
-		integer_type* iaddr = (integer_type*)m_ctx->memory->get(instruction_addr_id).data;
-		while ((*iaddr) < m_ctx->instructions->count()) {
-			m_current_instruction_idx = (*iaddr)++;
+		integer_type& iaddr = *(integer_type*)m_ctx->memory->get(instruction_addr_id).data;
+		instruction_array& iarr = *m_ctx->instructions;
+		if (exit_point == rs_integer_max) exit_point = iarr.count();
+		while (iaddr < exit_point) {
+			register_type* registers = this->registers();
+			m_current_instruction_idx = iaddr++;
 
-			auto& instruction = (*m_ctx->instructions)[m_current_instruction_idx];
+			auto& instruction = iarr[m_current_instruction_idx];
 			print_instruction(m_current_instruction_idx, instruction);
 			if (instruction.code == rs_instruction::null_instruction) continue;
 
 			const context::instruction_set* iset = default_iset;
 			if (instruction.arg_count > 0) {
 				context_memory::mem_var ba;
-				if (instruction.arg_is_register[0]) ba = m_ctx->memory->get(registers()[instruction.args[0].reg]);
+				if (instruction.arg_is_register[0]) ba = m_ctx->memory->get(registers[instruction.args[0].reg]);
 				else ba = m_ctx->memory->get(instruction.args[0].var);
 				iset = m_ctx->get_instruction_set(ba.type);
 			}
@@ -89,10 +92,6 @@ namespace rs {
 				);
 			}
 		}
-	}
-
-	void execution_state::execute_next() {
-		
 	}
 
 	void execution_state::push_state() {

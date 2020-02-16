@@ -56,7 +56,9 @@ namespace rs {
 	}
 	inline void df_newObj(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
-		state->registers()[rs_register::lvalue] = ctx->memory->set(rs_builtin_type::t_object, sizeof(script_object*), new script_object(ctx));
+		auto obj = new script_object(ctx);
+		obj->set_id(ctx->memory->set(rs_builtin_type::t_object, sizeof(script_object*), obj));
+		state->registers()[rs_register::lvalue] = obj->id();
 	}
 	inline void df_prop(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();

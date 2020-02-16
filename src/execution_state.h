@@ -28,8 +28,7 @@ namespace rs {
 			execution_state(const context_parameters& params, context* ctx);
 			~execution_state();
 
-			void execute_all(integer_type entry_point);
-			void execute_next();
+			void execute(integer_type entry_point, integer_type exit_point = rs_integer_max);
 
 			void push_state();
 			void pop_state(rs_register persist);

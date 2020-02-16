@@ -23,13 +23,14 @@ namespace rs {
 
 	class script_function {
 		public:
-			script_function(context* ctx, const tokenizer::token& name, variable_id entry_point_id);
+			script_function(context* ctx, const tokenizer::token& name, variable_id entry_point_id, integer_type instruction_count);
 			script_function(context* ctx, const std::string& name, script_function_callback cb);
 			~script_function();
 
 			tokenizer::token name;
 
 			integer_type entry_point;
+			integer_type exit_point;
 			variable_id function_id;
 			variable_id entry_point_id;
 			dynamic_pod_array<variable_id> declared_vars;

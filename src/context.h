@@ -23,6 +23,7 @@ namespace rs {
 
 			bool add_code(const std::string& code);
 			bool execute(const std::string& code, context_memory::mem_var& result);
+			bool call_function(script_function* func, variable_id this_obj, variable_id* args, u8 arg_count, context_memory::mem_var& result);
 			const context_parameters& params() const { return m_params; }
 
 			struct instruction_set {

@@ -107,7 +107,7 @@ void print_instructions(const rs::context& ctx) {
 class test : public rs::script_object {
 	public:
 		test(rs::context* ctx) : rs::script_object(ctx) {
-			define_property("value", rs::rs_builtin_type::t_integer, &test::value);
+			inject_property(this, "value", rs::rs_builtin_type::t_integer, &test::value);
 
 			rs::variable_id t_id = ctx->memory->inject(rs::rs_builtin_type::t_object, sizeof(test*), this);
 			rs::tokenizer::token tok = { __LINE__, 0, "test", __FILE__ }; 
@@ -130,7 +130,11 @@ rs::variable_id test_func(rs::func_args* args) {
 		str += rs::var_tostring(arg->var);
 		return true;
 	});
-	rs::integer_type result = printf("%s\n", str.c_str());
+
+	rs::context_memory::mem_var mv;
+	memset(&mv, 0, sizeof(mv));
+	if (args->self) mv = args->context->memory->get(args->self->id());
+	rs::integer_type result = printf("----%s: %s\n", rs::var_tostring(mv).c_str(), str.c_str());
 	
 	return args->context->memory->set(rs::rs_builtin_type::t_integer, sizeof(rs::integer_type), &result);
 }
@@ -157,13 +161,7 @@ int main(int arg_count, const char** args) {
 		"for(let f = 0;f < 10;f++) x(1, t(), 3);\n"
 	);
 
-	print_instructions(ctx);
-
-	/*	
-	rs::context_memory::mem_var result = { 0 };
-	ctx.execute("x(1, t(), 3);", result);
-	printf("x(1, t(), 3) : %s\n", var_to_string(result).c_str());
-	*/
+	//print_instructions(ctx);
 
 	printf("press enter to continue\n");
 	char c[4] = { 0 };

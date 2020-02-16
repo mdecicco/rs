@@ -30,7 +30,7 @@ namespace rs {
 				ref_vec params;
 				variable_id function_id;
 				variable_id instruction_offset;
-				u64 instruction_count;
+				integer_type instruction_count;
 				ref_vec declared_vars;
 				ref_vec referenced_vars;
 				std::vector<u32> reference_counts;
@@ -61,7 +61,7 @@ namespace rs {
 			function_ref* compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions);
 			bool compile_expression(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 			bool compile_statement(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool parseSemicolon = true);
-			bool compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions);
+			bool compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool& pushed_state);
 			bool compile_parameter_list(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 			bool compile_json(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 	};

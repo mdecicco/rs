@@ -9,6 +9,7 @@ option(RS_BIG_FLOATS "Use 64-bit script floats")
 
 file(GLOB src
 	"src/*.h"
+	"src/*.hpp"
 	"src/*.cpp"
 )
 source_group(src FILES ${src})

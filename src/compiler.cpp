@@ -156,7 +156,7 @@ namespace rs {
 				function_ref* func = compile_function(t, ctx, instructions);
 				if (func) {
 					ctx.functions.push_back(func);
-					auto f = new script_function(m_script_context, func->name, func->instruction_offset);
+					auto f = new script_function(m_script_context, func->name, func->instruction_offset, func->instruction_count);
 					f->function_id = func->function_id;
 					for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
 					for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
@@ -400,7 +400,8 @@ namespace rs {
 		// populate lvalue
 		if (var.id || var.reg != rs_register::null_register) {
 			// variable or call to function stored in variable
-			is_const = compile_identifier(var, identifier, t, ctx, instructions);
+			bool did_push_state = false;
+			is_const = compile_identifier(var, identifier, t, ctx, instructions, did_push_state);
 			if (ctx.currentFunction) {
 				bool found = false;
 				for (u32 i = 0;i < ctx.currentFunction->referenced_vars.size();i++) {
@@ -431,6 +432,16 @@ namespace rs {
 
 				instructions.append(
 					instruction(rs_instruction::move).arg(rs_register::lvalue).arg(rs_register::return_value),
+					ctx.file,
+					identifier.line,
+					identifier.col,
+					t.lines[identifier.line]
+				);
+			}
+
+			if (did_push_state) {
+				instructions.append(
+					instruction(rs_instruction::popState).arg(rs_register::lvalue),
 					ctx.file,
 					identifier.line,
 					identifier.col,
@@ -1083,7 +1094,7 @@ namespace rs {
 		return compiled;
 	}
 
-	bool script_compiler::compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions) {
+	bool script_compiler::compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool& pushed_state) {
 		if (reference.valid()) {
 			auto i = instruction(rs_instruction::move).arg(rs_register::lvalue);
 			if (variable.id) i.arg(variable.id);
@@ -1102,6 +1113,25 @@ namespace rs {
 			auto prop_name = t.identifier();
 			variable_id vid = define_static_string(m_script_context, prop_name.text);
 
+			if (!pushed_state) {
+				instructions.append(
+					instruction(rs_instruction::pushState),
+					ctx.file,
+					accessor_operator.line,
+					accessor_operator.col,
+					t.lines[accessor_operator.line]
+				);
+				pushed_state = true;
+			}
+
+			instructions.append(
+				instruction(rs_instruction::move).arg(rs_register::this_obj).arg(rs_register::lvalue),
+				ctx.file,
+				accessor_operator.line,
+				accessor_operator.col,
+				t.lines[accessor_operator.line]
+			);
+
 			instruction& prop = instructions.append(
 				instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(vid),
 				ctx.file,
@@ -1118,7 +1148,7 @@ namespace rs {
 				// this property on the object is being assigned
 				prop.code = rs_instruction::propAssign;
 			} else {
-				compile_identifier(var_ref(m_script_context, tokenizer::token(), false), tokenizer::token(), t, ctx, instructions);
+				compile_identifier(var_ref(m_script_context, tokenizer::token(), false), tokenizer::token(), t, ctx, instructions, pushed_state);
 				// lvalue will now be pointing to the accessed variable at the
 				// end of the accessor path
 			}
@@ -1128,6 +1158,25 @@ namespace rs {
 
 		auto index_open_operator = t.character('[', false);
 		if (index_open_operator.valid()) {
+			if (!pushed_state) {
+				instructions.append(
+					instruction(rs_instruction::pushState),
+					ctx.file,
+					accessor_operator.line,
+					accessor_operator.col,
+					t.lines[accessor_operator.line]
+				);
+				pushed_state = true;
+			}
+
+			instructions.append(
+				instruction(rs_instruction::move).arg(rs_register::this_obj).arg(rs_register::lvalue),
+				ctx.file,
+				accessor_operator.line,
+				accessor_operator.col,
+				t.lines[accessor_operator.line]
+			);
+
 			auto num = t.number_constant(false);
 			if (num.valid()) {
 				variable_id vid = define_static_string(m_script_context, num.text);
