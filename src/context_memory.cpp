@@ -133,11 +133,11 @@ namespace rs {
 					break;
 				}
 				case rs::rs_builtin_type::t_class: {
-					val = "class";
+					val = "<class>";
 					break;
 				}
 				case rs::rs_builtin_type::t_function: {
-					val = "function";
+					val = "<function>";
 					break;
 				}
 				case rs::rs_builtin_type::t_object: {
@@ -159,7 +159,7 @@ namespace rs {
 					break;
 				}
 				default: {
-					val = "scripted type";
+					val = "<scripted type>";
 					break;
 				}
 			}

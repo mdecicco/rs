@@ -9,6 +9,7 @@ void print_instructions(const rs::context& ctx) {
 	const char* instructions[] = {
 		"null",
 		"store",
+		"addProto",
 		"newObj",
 		"prop",
 		"propAssign",
@@ -158,10 +159,20 @@ int main(int arg_count, const char** args) {
 			"e = t();\n"
 			"return (d - e) + 5.25 + -500 * (a + b + c);\n"
 		"}\n"
-		"for(let f = 0;f < 10;f++) x(1, t(), 3);\n"
+		"class Test {"
+			"constructor(g) {"
+				"this.a = g;"
+				"return;"
+			"}"
+			"test() {"
+				"return this.a;"
+			"}"
+			"static f = 32;"
+			"static c() { return 5; }"
+		"};\n"
 	);
 
-	//print_instructions(ctx);
+	print_instructions(ctx);
 
 	printf("press enter to continue\n");
 	char c[4] = { 0 };

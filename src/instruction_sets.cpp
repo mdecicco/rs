@@ -54,6 +54,20 @@ namespace rs {
 
 		ctx->memory->set(dst_id, src.type, src.size, src.data);
 	}
+	inline void df_addProto(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		mem_var a;
+		if (i->arg_is_register[0]) a = ctx->memory->get(registers[i->args[0].reg]);
+		else a = ctx->memory->get(i->args[0].var);
+
+		throw runtime_exception(
+			format("'%s' is not an object", var_tostring(a).c_str()),
+			state,
+			*i
+		);
+	}
 	inline void df_newObj(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		auto obj = new script_object(ctx);
@@ -65,8 +79,8 @@ namespace rs {
 		register_type* registers = state->registers();
 
 		mem_var a;
-		if (i->arg_is_register[1]) a = ctx->memory->get(registers[i->args[1].reg]);
-		else a = ctx->memory->get(i->args[1].var);
+		if (i->arg_is_register[0]) a = ctx->memory->get(registers[i->args[0].reg]);
+		else a = ctx->memory->get(i->args[0].var);
 
 		throw runtime_exception(
 			format("'%s' is not an object", var_tostring(a).c_str()),
@@ -79,8 +93,8 @@ namespace rs {
 		register_type* registers = state->registers();
 
 		mem_var a;
-		if (i->arg_is_register[1]) a = ctx->memory->get(registers[i->args[1].reg]);
-		else a = ctx->memory->get(i->args[1].var);
+		if (i->arg_is_register[0]) a = ctx->memory->get(registers[i->args[0].reg]);
+		else a = ctx->memory->get(i->args[0].var);
 
 		throw runtime_exception(
 			format("'%s' is not an object", var_tostring(a).c_str()),
@@ -928,6 +942,21 @@ namespace rs {
 		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 
+	inline void obj_addProto(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
+		mem_var a = ctx->memory->get(a_id);
+
+		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		mem_var b = ctx->memory->get(b_id);
+
+		script_object* obj = (script_object*)a.data;
+		object_prototype* proto = (object_prototype*)b.data;
+
+		obj->add_prototype(proto, false, nullptr, 0);
+	}
 	inline void obj_prop(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
@@ -963,11 +992,14 @@ namespace rs {
 		script_object* obj = (script_object*)a.data;
 		variable_id prop_id = obj->property(propName);
 		if (prop_id == 0) {
-			throw runtime_exception(
-				format("Object has no property named '%s'", propName.c_str()),
-				state,
-				*i
-			);
+			prop_id = obj->proto_property(propName);
+			if (prop_id == 0) {
+				throw runtime_exception(
+					format("Object has no property named '%s'", propName.c_str()),
+					state,
+					*i
+				);
+			}
 		}
 
 		registers[rs_register::lvalue] = prop_id;
@@ -1138,6 +1170,7 @@ namespace rs {
 	}
 
 	void add_object_instruction_set(context* ctx) {
+		ctx->define_instruction(rs_builtin_type::t_object, rs_instruction::addProto, obj_addProto);
 		ctx->define_instruction(rs_builtin_type::t_object, rs_instruction::prop, obj_prop);
 		ctx->define_instruction(rs_builtin_type::t_object, rs_instruction::propAssign, obj_propAssign);
 	}

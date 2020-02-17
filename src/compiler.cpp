@@ -3,6 +3,7 @@
 #include <parse_utils.h>
 #include <script_object.h>
 #include <script_function.h>
+#include <prototype.h>
 using namespace std;
 
 namespace rs {
@@ -104,6 +105,11 @@ namespace rs {
 	}
 
 	script_compiler::var_ref script_compiler::parse_context::var(const string& name) {
+		if (name == "this") {
+			tokenizer::token t = { 0, 0, "this", "internal" };
+			return var_ref(rs_register::this_obj, t, true);
+		}
+
 		for (auto& ref : globals) {
 			if (ref.name.text == name) return ref;
 		}
@@ -137,6 +143,18 @@ namespace rs {
 		return 0;
 	}
 
+	object_prototype* script_compiler::parse_context::proto(const string& name) {
+		for (auto* proto : prototypes) {
+			if (proto->name() == name) return proto;
+		}
+
+		for (auto* proto : ctx->prototypes) {
+			if (proto->name() == name) return proto;
+		}
+
+		return nullptr;
+	}
+
 
 
 	bool script_compiler::compile(const std::string& code, instruction_array& instructions) {
@@ -148,25 +166,26 @@ namespace rs {
 			parse_context ctx;
 			ctx.ctx = m_script_context;
 			ctx.currentFunction = nullptr;
+			ctx.currentPrototype = nullptr;
 			ctx.file = "test";
 			ctx.current_scope_idx = 0;
 			ctx.push_locals();
 
 			while (!t.at_end()) {
-				function_ref* func = compile_function(t, ctx, instructions);
-				if (func) {
-					ctx.functions.push_back(func);
-					auto f = new script_function(m_script_context, func->name, func->instruction_offset, func->instruction_count);
-					f->function_id = func->function_id;
-					for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
-					for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
-					m_script_context->memory->get(func->function_id).data = f;
-
-					m_script_context->global_functions.push_back(f);
-					continue;
-				}
-
 				compile_statement(t, ctx, instructions);
+			}
+
+			for (function_ref* func : ctx.functions) {
+				auto f = new script_function(m_script_context, func->name, func->instruction_offset, func->instruction_count);
+				f->function_id = func->function_id;
+				for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
+				for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
+				m_script_context->memory->get(func->function_id).data = f;
+				if (func->is_global) m_script_context->global_functions.push_back(f);
+			}
+
+			for (object_prototype* proto : ctx.prototypes) {
+				m_script_context->prototypes.push_back(proto);
 			}
 
 			ctx.pop_locals();
@@ -186,7 +205,6 @@ namespace rs {
 	void script_compiler::initialize_tokenizer(tokenizer& t) {
 		t.specify_keyword("function");
 		t.specify_keyword("return");
-		t.specify_keyword("this");
 		t.specify_keyword("const");
 		t.specify_keyword("let");
 		t.specify_keyword("if");
@@ -200,6 +218,8 @@ namespace rs {
 		t.specify_keyword("continue");
 		t.specify_keyword("break");
 		t.specify_keyword("new");
+		t.specify_keyword("static");
+		t.specify_keyword("constructor");
 		t.specify_keyword("?");
 		t.specify_keyword(":");
 		t.specify_keyword("+");
@@ -229,16 +249,112 @@ namespace rs {
 		t.specify_keyword("=>");
 	}
 
-	script_compiler::function_ref* script_compiler::compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions) {
-		auto func_kw = t.keyword(false, "function");
-		if (!func_kw.valid()) return nullptr;
+	void script_compiler::check_declaration(tokenizer& t, parse_context& ctx, token& declaration) {
+		if (ctx.currentPrototype) {
+			script_function* method = ctx.currentPrototype->method(declaration.text);
+			if (method) {
+				throw parse_exception(
+					format("Cannot redeclare class method '%s', previous definition is on %s:%d", declaration.text.c_str(), method->name.file.c_str(), method->name.line + 1),
+					ctx.file,
+					t.lines[declaration.line],
+					declaration.line,
+					declaration.col
+				);
+			}
 
+			method = ctx.currentPrototype->static_method(declaration.text);
+			if (method) {
+				throw parse_exception(
+					format("Cannot redeclare static class method '%s', previous definition is on %s:%d", declaration.text.c_str(), method->name.file.c_str(), method->name.line + 1),
+					ctx.file,
+					t.lines[declaration.line],
+					declaration.line,
+					declaration.col
+				);
+			}
+
+			variable_id staticVar = ctx.currentPrototype->static_variable(declaration.text);
+			if (staticVar) {
+				for (auto& v : ctx.prototypeStaticVars) {
+					if (v.id == staticVar) {
+						throw parse_exception(
+							format("Cannot redeclare static class variable '%s', previous definition is on %s:%d", declaration.text.c_str(), v.name.file.c_str(), v.name.line + 1),
+							ctx.file,
+							t.lines[declaration.line],
+							declaration.line,
+							declaration.col
+						);
+					}
+				}
+
+				throw parse_exception(
+					format("Cannot redeclare static class variable '%s'", declaration.text.c_str()),
+					ctx.file,
+					t.lines[declaration.line],
+					declaration.line,
+					declaration.col
+				);
+			}
+
+			return;
+		}
+
+		auto existing = ctx.var(declaration.text);
+		if (existing.id || existing.reg != rs_register::null_register) {
+			throw parse_exception(
+				format("Cannot redeclare '%s', previous definition is on %s:%d", declaration.text.c_str(), existing.name.file.c_str(), existing.name.line + 1),
+				ctx.file,
+				t.lines[declaration.line],
+				declaration.line,
+				declaration.col
+			);
+		}
+
+		variable_id func = ctx.func(declaration.text);
+		if (func) {
+			token func_name;
+			for (auto* func : ctx.functions) {
+				if (func->name.text == declaration.text) {
+					func_name = func->name;
+					break;
+				}
+			}
+
+			for (auto* func : m_script_context->global_functions) {
+				if (func->name.text == declaration.text) {
+					func_name = func->name;
+					break;
+				}
+			}
+
+			throw parse_exception(
+				format("Cannot redeclare '%s', previous definition is on %s:%d", declaration.text.c_str(), func_name.file.c_str(), func_name.line + 1),
+				ctx.file,
+				t.lines[declaration.line],
+				declaration.line,
+				declaration.col
+			);
+		}
+
+		object_prototype* proto = ctx.proto(declaration.text);
+		if (proto) {
+			throw parse_exception(
+				format("Cannot redeclare '%s', previous definition is on %s:%d", declaration.text.c_str(), proto->declaration().file.c_str(), proto->declaration().line + 1),
+				ctx.file,
+				t.lines[declaration.line],
+				declaration.line,
+				declaration.col
+			);
+		}
+	}
+
+	script_compiler::function_ref* script_compiler::compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions) {
 		instruction& jump_over = instructions.append(
 			instruction(rs_instruction::jump),
 			ctx.file,
-			func_kw.line,
-			func_kw.col,
-			t.lines[func_kw.line]
+			t.line(),
+			t.col(),
+			t.lines[t.line()]
 		);
 
 		ref_vec params;
@@ -246,7 +362,9 @@ namespace rs {
 
 		ctx.push_locals();
 
-		auto func_name = t.identifier();
+		auto func_name = t.identifier(false);
+		check_declaration(t, ctx, func_name);
+
 		auto open_params = t.character('(');
 		for(unsigned char i = 0;i < 8;i++) {
 			auto pname = t.identifier(false);
@@ -266,11 +384,14 @@ namespace rs {
 		func->name = func_name;
 		func->params = params;
 		func->instruction_offset = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &first_instruction);
+		func->is_global = !ctx.currentFunction && !ctx.currentPrototype;
 		ctx.currentFunction = func;
+		if (!ctx.currentPrototype) ctx.functions.push_back(func);
 
 		bool closed = false;
+		token body_close;
 		while(!t.at_end()) {
-			auto body_close = t.character('}', false);
+			body_close = t.character('}', false);
 			if (body_close.valid()) {
 				closed = true;
 				break;
@@ -298,7 +419,103 @@ namespace rs {
 		variable_id  jump_to_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &jump_to);
 		jump_over.arg(jump_to_id);
 
+		instructions.append(
+			instruction(rs_instruction::move).arg(rs_register::lvalue).arg(func->function_id),
+			ctx.file,
+			body_close.line,
+			body_close.col,
+			t.lines[body_close.line]
+		);
+
 		return func;
+	}
+
+	object_prototype* script_compiler::compile_class(tokenizer& t, parse_context& ctx, instruction_array& instructions) {
+		token class_name = t.identifier();
+		token inheritance_token = t.character(':', false);
+		token inherits_class;
+		if (inheritance_token.valid()) inherits_class = t.identifier();
+
+		object_prototype* proto = new object_prototype(m_script_context, class_name);
+		ctx.currentPrototype = proto;
+
+		token open = t.character('{');
+		token close = t.character('}', false);
+		while (!t.at_end() && !close.valid()) {
+			token static_kw = t.keyword(false, "static");
+			token ctor_kw = t.keyword(false, "constructor");
+			if (static_kw.valid()) {
+				auto var_name = t.identifier();
+
+				check_declaration(t, ctx, var_name);
+
+				auto initialized = t.keyword(false, "=");
+				
+				var_ref ref = var_ref(m_script_context, var_name, false);
+
+				if (initialized.valid()) {
+					compile_expression(t, ctx, instructions, true);
+					instructions.append(
+						instruction(rs_instruction::store).arg(ref.id).arg(rs_register::rvalue),
+						ctx.file,
+						initialized.line,
+						initialized.col,
+						t.lines[initialized.line]
+					);
+					t.character(';');
+
+					proto->static_variable(var_name.text, ref.id);
+					ctx.prototypeStaticVars.push_back(ref);
+				} else if (t.semicolon(false).valid()) {
+					ctx.prototypeStaticVars.push_back(ref);
+					proto->static_variable(var_name.text, ref.id);
+				} else {
+					// must be a static function
+					function_ref* func = compile_function(t, ctx, instructions);
+					auto f = new script_function(m_script_context, var_name, func->instruction_offset, func->instruction_count);
+					f->function_id = func->function_id;
+					for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
+					for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
+					m_script_context->memory->get(func->function_id).data = f;
+					proto->static_method(f);
+				}
+			} else if (ctor_kw.valid()) {
+				function_ref* func = compile_function(t, ctx, instructions);
+				auto f = new script_function(m_script_context, ctor_kw, func->instruction_offset, func->instruction_count);
+				f->function_id = func->function_id;
+				for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
+				for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
+				m_script_context->memory->get(func->function_id).data = f;
+				proto->constructor(f);
+			} else {
+				function_ref* func = compile_function(t, ctx, instructions);
+				auto f = new script_function(m_script_context, func->name, func->instruction_offset, func->instruction_count);
+				f->function_id = func->function_id;
+				for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
+				for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
+				m_script_context->memory->get(func->function_id).data = f;
+				proto->method(f);
+			}
+
+			close = t.character('}', false);
+		}
+
+		if (!close.valid()) {
+			throw parse_exception(
+				"Encountered unexpected end of input while parsing class body",
+				ctx.file,
+				t.lines[open.line],
+				open.line,
+				open.col
+			);
+		}
+
+		t.semicolon();
+
+		ctx.currentPrototype = nullptr;
+		ctx.prototypeStaticVars.clear();
+
+		return proto;
 	}
 
 	bool script_compiler::compile_expression(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected) {
@@ -310,10 +527,14 @@ namespace rs {
 		bool is_const = true;
 		var_ref var = ctx.var("");
 		variable_id func = 0;
+		object_prototype* proto = nullptr;
 		token const_token;
 		token identifier;
+		token popen;
+		token new_kw;
+		bool is_function_def = t.keyword(false, "function").valid();
 
-		auto popen = t.character('(', false);
+		if (!is_function_def) popen = t.character('(', false);
 		auto do_operator = [&t, &is_const, &var, &func, &ctx, &instructions, this](rs_instruction i, const string& op_kw, bool assign, bool hasRhs = true) {
 			auto op = t.keyword(false, op_kw);
 			if (op.valid()) {
@@ -380,12 +601,14 @@ namespace rs {
 		};
 
 		if (!popen.valid()) {
+			new_kw = t.keyword(false, "new");
 			identifier = t.identifier(false);
 			if (identifier.valid()) {
 				var = ctx.var(identifier.text);
 				func = ctx.func(identifier.text);
+				proto = ctx.proto(identifier.text);
 
-				if (!var.id && var.reg == rs_register::null_register && !func) {
+				if (!var.id && var.reg == rs_register::null_register && !func && !proto) {
 					throw parse_exception(
 						format("Use of undeclared identifier '%s'", identifier.text.c_str()),
 						ctx.file,
@@ -486,6 +709,62 @@ namespace rs {
 				);
 			}
 		}
+		else if (proto) {
+			bool is_instantiation = compile_parameter_list(t, ctx, instructions, false);
+			if (is_instantiation && !new_kw.valid()) {
+				throw parse_exception(
+					format("Must use 'new' to instantiate object of class '%s'", proto->name().c_str()),
+					ctx.file,
+					t.lines[identifier.line],
+					identifier.line,
+					identifier.col
+				);
+			}
+
+			if (is_instantiation) {
+				if (proto->constructor()) {
+					instructions.append(
+						instruction(rs_instruction::newObj),
+						ctx.file,
+						new_kw.line,
+						new_kw.col,
+						t.lines[new_kw.line]
+					);
+
+					instructions.append(
+						instruction(rs_instruction::addProto).arg(rs_register::lvalue).arg(proto->id()),
+						ctx.file,
+						new_kw.line,
+						new_kw.col,
+						t.lines[new_kw.line]
+					);
+
+					instructions.append(
+						instruction(rs_instruction::move).arg(rs_register::this_obj).arg(rs_register::lvalue),
+						ctx.file,
+						new_kw.line,
+						new_kw.col,
+						t.lines[new_kw.line]
+					);
+
+					instructions.append(
+						instruction(rs_instruction::call).arg(proto->constructor()->function_id),
+						ctx.file,
+						identifier.line,
+						identifier.col,
+						t.lines[identifier.line]
+					);
+
+					instructions.append(
+						instruction(rs_instruction::popState).arg(rs_register::lvalue),
+						ctx.file,
+						identifier.line,
+						identifier.col,
+						t.lines[identifier.line]
+					);
+				}
+			}
+		}
 		else if (popen.valid()) {
 			instructions.append(
 				instruction(rs_instruction::pushState),
@@ -513,6 +792,9 @@ namespace rs {
 				pclose.col,
 				t.lines[pclose.line]
 			);
+		}
+		else if (is_function_def) {
+			compile_function(t, ctx, instructions);
 		}
 		else {
 			const_token = t.number_constant(false);
@@ -611,14 +893,23 @@ namespace rs {
 		auto kw = t.keyword(false);
 		if (kw.valid()) {
 			if (kw.text == "return") {
-				compile_expression(t, ctx, instructions, true);
-				instructions.append(
-					instruction(rs_instruction::move).arg(rs_register::return_value).arg(rs_register::rvalue),
-					ctx.file,
-					kw.line,
-					kw.col,
-					t.lines[kw.line]
-				);
+				if (compile_expression(t, ctx, instructions, false)) {
+					instructions.append(
+						instruction(rs_instruction::move).arg(rs_register::return_value).arg(rs_register::rvalue),
+						ctx.file,
+						kw.line,
+						kw.col,
+						t.lines[kw.line]
+					);
+				} else {
+					instructions.append(
+						instruction(rs_instruction::move).arg(rs_register::return_value).arg(variable_id(0)),
+						ctx.file,
+						kw.line,
+						kw.col,
+						t.lines[kw.line]
+					);
+				}
 				instructions.append(
 					instruction(rs_instruction::ret),
 					ctx.file,
@@ -973,42 +1264,8 @@ namespace rs {
 				bool uninitialized = t.semicolon(false).valid();
 				// expression parser needs to see this too
 				t.restore_state();
-				auto existing = ctx.var(var_name.text);
-				if (existing.id) {
-					throw parse_exception(
-						format("Cannot redeclare '%s', previous definition is on %s:%d", var_name.text.c_str(), existing.name.file.c_str(), existing.name.line + 1),
-						ctx.file,
-						t.lines[var_name.line],
-						var_name.line,
-						var_name.col
-					);
-				}
-
-				variable_id func = ctx.func(var_name.text);
-				if (func) {
-					token func_name;
-					for (auto* func : ctx.functions) {
-						if (func->name.text == var_name.text) {
-							func_name = func->name;
-							break;
-						}
-					}
-
-					for (auto* func : m_script_context->global_functions) {
-						if (func->name.text == var_name.text) {
-							func_name = func->name;
-							break;
-						}
-					}
-
-					throw parse_exception(
-						format("Cannot redeclare '%s', previous definition is on %s:%d", var_name.text.c_str(), func_name.file.c_str(), func_name.line + 1),
-						ctx.file,
-						t.lines[var_name.line],
-						var_name.line,
-						var_name.col
-					);
-				}
+				
+				check_declaration(t, ctx, var_name);
 				
 				// Variable should be non-const initially to allow
 				// the initializer expression to assign a value to it
@@ -1029,42 +1286,9 @@ namespace rs {
 				bool uninitialized = t.semicolon(false).valid();
 				// expression parser needs to see this too
 				t.restore_state();
-				auto existing = ctx.var(var_name.text);
-				if (existing.id || existing.reg != rs_register::null_register) {
-					throw parse_exception(
-						format("Cannot redeclare '%s', previous definition is on %s:%d", var_name.text.c_str(), existing.name.file.c_str(), existing.name.line + 1),
-						ctx.file,
-						t.lines[var_name.line],
-						var_name.line,
-						var_name.col
-					);
-				}
+				
+				check_declaration(t, ctx, var_name);
 
-				variable_id func = ctx.func(var_name.text);
-				if (func) {
-					token func_name;
-					for (auto* func : ctx.functions) {
-						if (func->name.text == var_name.text) {
-							func_name = func->name;
-							break;
-						}
-					}
-
-					for (auto* func : m_script_context->global_functions) {
-						if (func->name.text == var_name.text) {
-							func_name = func->name;
-							break;
-						}
-					}
-
-					throw parse_exception(
-						format("Cannot redeclare '%s', previous definition is on %s:%d", var_name.text.c_str(), func_name.file.c_str(), func_name.line + 1),
-						ctx.file,
-						t.lines[var_name.line],
-						var_name.line,
-						var_name.col
-					);
-				}
 				auto ref = var_ref(m_script_context, var_name, false);
 				ctx.locals.back().push_back(ref);
 				if (ctx.currentFunction) ctx.currentFunction->declared_vars.push_back(ref);
@@ -1082,7 +1306,29 @@ namespace rs {
 					kw.col
 				);
 			}
-			else return false;
+			else if (kw.text == "class") {
+				if (ctx.currentFunction) {
+					throw parse_exception(
+						"Classes can only be defined at the global scope",
+						ctx.file,
+						t.lines[kw.line],
+						kw.line,
+						kw.col
+					);
+				}
+				object_prototype* proto = compile_class(t, ctx, instructions);
+				ctx.prototypes.push_back(proto);
+			}
+			else if (kw.text == "function") {
+				compile_function(t, ctx, instructions);
+			}
+			else if (kw.text == "new") {
+				t.restore_state();
+				bool compiled = compile_expression(t, ctx, instructions, true);
+				if (parseSemicolon) t.character(';');
+
+				return compiled;
+			} else false;
 
 			return true;
 		}

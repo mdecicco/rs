@@ -18,6 +18,7 @@ namespace rs {
 			void delete_property(const std::string& name);
 
 			variable_id property(const std::string& name);
+			variable_id proto_property(const std::string& name);
 
 			void add_prototype(object_prototype* prototype, bool call_constructor, variable_id* args, u8 arg_count);
 
@@ -36,7 +37,7 @@ namespace rs {
 				return false;
 			}
 
-			dynamic_pod_array<object_prototype*> prototypes;
+			object_prototype* prototype;
 
 		protected:
 			munordered_map<std::string, variable_id> m_props;

@@ -1,10 +1,12 @@
 #include <script_object.h>
 #include <execution_state.h>
 #include <prototype.h>
+#include <script_function.h>
 using namespace std;
 
 namespace rs {
 	script_object::script_object(context* ctx) {
+		prototype = nullptr;
 		m_context = ctx;
 		m_id = 0;
 	}
@@ -44,8 +46,17 @@ namespace rs {
 		return p->second;
 	}
 
-	void script_object::add_prototype(object_prototype* prototype, bool call_constructor, variable_id* args, u8 arg_count) {
-		prototypes.push(prototype);
+	variable_id script_object::proto_property(const string& name) {
+		script_function* method = prototype->method(name);
+		if (method) {
+			return method->function_id;
+		}
+
+		return 0;
+	}
+
+	void script_object::add_prototype(object_prototype* _prototype, bool call_constructor, variable_id* args, u8 arg_count) {
+		prototype = _prototype;
 		if (call_constructor) {
 			auto constructor = prototype->constructor();
 			if (constructor) {

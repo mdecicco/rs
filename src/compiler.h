@@ -8,6 +8,7 @@
 
 namespace rs {
 	class variable;
+	class object_prototype;
 	class script_compiler {
 		public:
 			script_compiler(const context_parameters& params);
@@ -34,6 +35,7 @@ namespace rs {
 				ref_vec declared_vars;
 				ref_vec referenced_vars;
 				std::vector<u32> reference_counts;
+				bool is_global;
 			};
 			typedef std::vector<function_ref*> func_vec;
 
@@ -41,16 +43,20 @@ namespace rs {
 				std::string file;
 				ref_vec globals;
 				std::vector<ref_vec> locals;
+				std::vector<object_prototype*> prototypes;
+				std::vector<var_ref> prototypeStaticVars;
 				func_vec functions;
 				u8 current_scope_idx;
 				context* ctx;
 
 				function_ref* currentFunction;
+				object_prototype* currentPrototype;
 
 				void push_locals();
 				void pop_locals();
 				var_ref var(const std::string& name);
 				variable_id func(const std::string& name);
+				object_prototype* proto(const std::string& name);
 			};
 
 			bool compile(const std::string& code, instruction_array& instructions);
@@ -58,7 +64,9 @@ namespace rs {
 		protected:
 			context* m_script_context;
 			void initialize_tokenizer(tokenizer& t);
+			void check_declaration(tokenizer& t, parse_context& ctx, tokenizer::token& declaration);
 			function_ref* compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions);
+			object_prototype* compile_class(tokenizer& t, parse_context& ctx, instruction_array& instructions);
 			bool compile_expression(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 			bool compile_statement(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool parseSemicolon = true);
 			bool compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool& pushed_state);

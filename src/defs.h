@@ -12,6 +12,7 @@ namespace rs {
 		// referred to by register on left
 		store,
 		newObj,
+		addProto,
 		prop,
 		propAssign,
 		// make register point to variable on right, or variable
@@ -119,7 +120,8 @@ namespace rs {
 		return 
 			type == rs_builtin_type::t_object
 			|| type == rs_builtin_type::t_string
-			|| type == rs_builtin_type::t_function;
+			|| type == rs_builtin_type::t_function
+			|| type == rs_builtin_type::t_class;
 	}
 
 	#ifdef SCRIPTS_USE_64BIT_INTEGERS

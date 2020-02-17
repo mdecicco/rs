@@ -6,6 +6,7 @@
 namespace rs {
 	class execution_state;
 	class script_function;
+	class object_prototype;
 
 	typedef void (*instruction_callback)(execution_state*, instruction_array::instruction*);
 
@@ -43,6 +44,7 @@ namespace rs {
 
 			std::vector<script_function*> global_functions;
 			std::vector<variable> global_variables;
+			std::vector<object_prototype*> prototypes;
 
 		protected:
 			dynamic_pod_array<instruction_set> m_instruction_sets;
