@@ -173,6 +173,7 @@ namespace rs {
 			"inc",
 			"dec",
 			"branch",
+			"clearParams",
 			"call",
 			"jump",
 			"ret",
@@ -221,6 +222,6 @@ namespace rs {
 				printf(" #%llu (%s)", i.args[a].var, var_tostring(v).c_str());
 			}
 		}
-		printf("\n");
+		printf(" [stack: %d]\n", m_stack_idx);
 	}
 };

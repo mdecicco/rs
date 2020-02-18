@@ -385,6 +385,7 @@ namespace rs {
 		func->params = params;
 		func->instruction_offset = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &first_instruction);
 		func->is_global = !ctx.currentFunction && !ctx.currentPrototype;
+		func->has_explicit_return = false;
 		ctx.currentFunction = func;
 		if (!ctx.currentPrototype) ctx.functions.push_back(func);
 
@@ -400,8 +401,6 @@ namespace rs {
 			compile_statement(t, ctx, instructions);
 		}
 
-		ctx.currentFunction = nullptr;
-
 		if (!closed) {
 			throw parse_exception(
 				"Encountered unexpected end of input while parsing function body",
@@ -411,6 +410,26 @@ namespace rs {
 				body_open.col
 			);
 		}
+
+		if (!func->has_explicit_return) {
+			instructions.append(
+				instruction(rs_instruction::move).arg(rs_register::return_value).arg(variable_id(0)),
+				ctx.file,
+				body_close.line,
+				body_close.col,
+				t.lines[body_close.line]
+			);
+
+			instructions.append(
+				instruction(rs_instruction::ret),
+				ctx.file,
+				body_close.line,
+				body_close.col,
+				t.lines[body_close.line]
+			);
+		}
+
+		ctx.currentFunction = nullptr;
 
 		ctx.pop_locals();
 
@@ -660,6 +679,14 @@ namespace rs {
 					identifier.col,
 					t.lines[identifier.line]
 				);
+
+				instructions.append(
+					instruction(rs_instruction::popState).arg(rs_register::lvalue),
+					ctx.file,
+					identifier.line,
+					identifier.col,
+					t.lines[identifier.line]
+				);
 			}
 
 			if (did_push_state) {
@@ -710,7 +737,7 @@ namespace rs {
 			}
 		}
 		else if (proto) {
-			bool is_instantiation = compile_parameter_list(t, ctx, instructions, false);
+			bool is_instantiation = compile_parameter_list(t, ctx, instructions, new_kw.valid());
 			if (is_instantiation && !new_kw.valid()) {
 				throw parse_exception(
 					format("Must use 'new' to instantiate object of class '%s'", proto->name().c_str()),
@@ -755,6 +782,72 @@ namespace rs {
 						t.lines[identifier.line]
 					);
 
+					instructions.append(
+						instruction(rs_instruction::popState).arg(rs_register::lvalue),
+						ctx.file,
+						identifier.line,
+						identifier.col,
+						t.lines[identifier.line]
+					);
+				}
+				else {
+					instructions.append(
+						instruction(rs_instruction::newObj),
+						ctx.file,
+						new_kw.line,
+						new_kw.col,
+						t.lines[new_kw.line]
+					);
+
+					instructions.append(
+						instruction(rs_instruction::addProto).arg(rs_register::lvalue).arg(proto->id()),
+						ctx.file,
+						new_kw.line,
+						new_kw.col,
+						t.lines[new_kw.line]
+					);
+				}
+			} else {
+				t.backup_state();
+				var_ref r(rs_register::null_register, token(), false);
+				r.id = proto->id();
+				r.is_const = true;
+				r.name = identifier;
+				r.reg = rs_register::null_register;
+
+				bool did_push_state = false;
+				is_const = compile_identifier(r, identifier, t, ctx, instructions, did_push_state);
+				
+				if (compile_parameter_list(t, ctx, instructions, false)) {
+					// call to function stored in static class variable
+					is_const = true;
+
+					instructions.append(
+						instruction(rs_instruction::call).arg(rs_register::lvalue),
+						ctx.file,
+						identifier.line,
+						identifier.col,
+						t.lines[identifier.line]
+					);
+
+					instructions.append(
+						instruction(rs_instruction::move).arg(rs_register::lvalue).arg(rs_register::return_value),
+						ctx.file,
+						identifier.line,
+						identifier.col,
+						t.lines[identifier.line]
+					);
+
+					instructions.append(
+						instruction(rs_instruction::popState).arg(rs_register::lvalue),
+						ctx.file,
+						identifier.line,
+						identifier.col,
+						t.lines[identifier.line]
+					);
+				}
+
+				if (did_push_state) {
 					instructions.append(
 						instruction(rs_instruction::popState).arg(rs_register::lvalue),
 						ctx.file,
@@ -893,6 +986,16 @@ namespace rs {
 		auto kw = t.keyword(false);
 		if (kw.valid()) {
 			if (kw.text == "return") {
+				if (!ctx.currentFunction) {
+					throw parse_exception(
+						"Encountered unexpected return statement",
+						ctx.file,
+						t.lines[kw.line],
+						kw.line,
+						kw.col
+					);
+				}
+
 				if (compile_expression(t, ctx, instructions, false)) {
 					instructions.append(
 						instruction(rs_instruction::move).arg(rs_register::return_value).arg(rs_register::rvalue),
@@ -918,6 +1021,8 @@ namespace rs {
 					t.lines[kw.line]
 				);
 				if (parseSemicolon) t.character(';');
+
+				ctx.currentFunction->has_explicit_return = true;
 			}
 			else if (kw.text == "if") {
 				ctx.current_scope_idx++;
@@ -1328,7 +1433,8 @@ namespace rs {
 				if (parseSemicolon) t.character(';');
 
 				return compiled;
-			} else false;
+			}
+			else false;
 
 			return true;
 		}
@@ -1515,6 +1621,14 @@ namespace rs {
 			t.lines[popen.line]
 		);
 
+		instructions.append(
+			instruction(rs_instruction::clearParams),
+			ctx.file,
+			popen.line,
+			popen.col,
+			t.lines[popen.line]
+		);
+
 		token pclose;
 		token comma;
 		for (u16 p = 0;p < 128;p++) {
@@ -1528,51 +1642,35 @@ namespace rs {
 				);
 			}
 
-			if (!pclose.valid()) pclose = t.character(')', false);
+			pclose = t.character(')', !comma.valid() && p > 0);
+			if (pclose.valid()) break;
 
-			bool try_compile = !pclose.valid();
-			if (try_compile) {
-				instructions.backup();
-				instructions.append(
-					instruction(rs_instruction::pushState),
-					ctx.file,
-					popen.line,
-					popen.col,
-					t.lines[popen.line]
-				);
-			}
-			bool compiled = try_compile && compile_expression(t, ctx, instructions, comma.valid() || !pclose.valid());
-			if (compiled) {
-				instructions.commit();
+			instructions.append(
+				instruction(rs_instruction::pushState),
+				ctx.file,
+				popen.line,
+				popen.col,
+				t.lines[popen.line]
+			);
 
-				comma = t.character(',', false);
-				pclose = t.character(')', !comma.valid());
-				instructions.append(
-					instruction(rs_instruction::popState).arg(rs_register::rvalue),
-					ctx.file,
-					(comma.valid() ? comma : pclose).line,
-					(comma.valid() ? comma : pclose).col,
-					t.lines[(comma.valid() ? comma : pclose).line]
-				);
-				instructions.append(
-					instruction(rs_instruction::move).arg(rs_register(rs_register::parameter0 + p)).arg(rs_register::rvalue),
-					ctx.file,
-					(comma.valid() ? comma : pclose).line,
-					(comma.valid() ? comma : pclose).col,
-					t.lines[(comma.valid() ? comma : pclose).line]
-				);
-			} else {
-				if (try_compile) instructions.restore();
+			compile_expression(t, ctx, instructions, true);
+			comma = t.character(',', false);
 
-				instructions.append(
-					instruction(rs_instruction::move).arg(rs_register(rs_register::parameter0 + p)).arg(variable_id(0)),
-					ctx.file,
-					popen.line,
-					popen.col,
-					t.lines[popen.line]
-				);
-				if (p == 7) break;
-			}
+			instructions.append(
+				instruction(rs_instruction::popState).arg(rs_register::rvalue),
+				ctx.file,
+				(comma.valid() ? comma : pclose).line,
+				(comma.valid() ? comma : pclose).col,
+				t.lines[(comma.valid() ? comma : pclose).line]
+			);
+
+			instructions.append(
+				instruction(rs_instruction::move).arg(rs_register(rs_register::parameter0 + p)).arg(rs_register::rvalue),
+				ctx.file,
+				(comma.valid() ? comma : pclose).line,
+				(comma.valid() ? comma : pclose).col,
+				t.lines[(comma.valid() ? comma : pclose).line]
+			);
 		}
 
 		if (!expected) {

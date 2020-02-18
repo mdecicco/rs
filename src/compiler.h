@@ -36,6 +36,7 @@ namespace rs {
 				ref_vec referenced_vars;
 				std::vector<u32> reference_counts;
 				bool is_global;
+				bool has_explicit_return;
 			};
 			typedef std::vector<function_ref*> func_vec;
 

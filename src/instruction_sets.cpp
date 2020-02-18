@@ -3,6 +3,7 @@
 #include <execution_state.h>
 #include <script_object.h>
 #include <script_function.h>
+#include <prototype.h>
 using namespace std;
 
 #define max(a, b) ((a) < (b) ? (b) : (a))
@@ -263,6 +264,18 @@ namespace rs {
 		}
 		vstore(ctx, registers[rs_register::instruction_address], i->args[2].var);
 	}
+	inline void df_clearParams(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+		registers[rs_register::parameter0] = 0;
+		registers[rs_register::parameter1] = 0;
+		registers[rs_register::parameter2] = 0;
+		registers[rs_register::parameter3] = 0;
+		registers[rs_register::parameter4] = 0;
+		registers[rs_register::parameter5] = 0;
+		registers[rs_register::parameter6] = 0;
+		registers[rs_register::parameter7] = 0;
+	}
 	inline void df_call(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
@@ -288,16 +301,16 @@ namespace rs {
 				args.parameters.push({
 					ctx->memory->get(arg_id),
 					arg_id
-				});
+					});
 			}
 
 			registers[rs_register::return_value] = func->cpp_callback(&args);
 		} else {
 			vstore(ctx, registers[rs_register::return_address], registers[rs_register::instruction_address]);
-		
+
 			state->push_state();
 			state->push_scope();
-		
+
 			vstore(ctx, registers[rs_register::instruction_address], func->entry_point_id);
 		}
 	}
@@ -1114,6 +1127,102 @@ namespace rs {
 		registers[rs_register::lvalue] = ctx->memory->set(rs_builtin_type::t_string, 1, result);
 	}
 
+	inline void class_prop(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
+		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		mem_var a = ctx->memory->get(a_id);
+		mem_var b = ctx->memory->get(b_id);
+
+		string propName;
+		switch (b.type) {
+			case rs_builtin_type::t_string: {
+				propName = string((char*)b.data, b.size);
+				break;
+			}
+			case rs_builtin_type::t_integer: {
+				propName = format("%d", *(integer_type*)b.data);
+				break;
+			}
+			case rs_builtin_type::t_decimal: {
+				propName = format("%f", *(decimal_type*)b.data);
+				break;
+			}
+			default: {
+				throw runtime_exception(
+					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+					state,
+					*i
+				);
+			}
+		}
+
+		object_prototype* proto = (object_prototype*)a.data;
+		variable_id prop_id = proto->static_variable(propName);
+		if (prop_id == 0) {
+			script_function* func = proto->static_method(propName);
+			if (func) {
+				prop_id = func->function_id;
+			} else {
+				throw runtime_exception(
+					format("Class has no static property or method named '%s'", propName.c_str()),
+					state,
+					*i
+				);
+			}
+		}
+
+		registers[rs_register::lvalue] = prop_id;
+	}
+	inline void class_propAssign(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
+		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		mem_var a = ctx->memory->get(a_id);
+		mem_var b = ctx->memory->get(b_id);
+
+		string propName;
+		switch (b.type) {
+			case rs_builtin_type::t_string: {
+				propName = string((char*)b.data, b.size);
+				break;
+			}
+			case rs_builtin_type::t_integer: {
+				propName = format("%d", *(integer_type*)b.data);
+				break;
+			}
+			case rs_builtin_type::t_decimal: {
+				propName = format("%f", *(decimal_type*)b.data);
+				break;
+			}
+			default: {
+				throw runtime_exception(
+					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+					state,
+					*i
+				);
+			}
+		}
+
+		object_prototype* proto = (object_prototype*)a.data;
+		variable_id prop_id = proto->static_variable(propName);
+		if (prop_id == 0) {
+			script_function* func = proto->static_method(propName);
+			if (func) {
+				prop_id = func->function_id;
+			} else {
+				prop_id = ctx->memory->set(rs_builtin_type::t_null, 0, nullptr);
+				proto->static_variable(propName, prop_id);
+			}
+		}
+
+		registers[rs_register::lvalue] = prop_id;
+	}
+
 
 
 	void add_default_instruction_set(context* ctx) {
@@ -1128,6 +1237,7 @@ namespace rs {
 		ctx->define_instruction(0, rs_instruction::orEq, df_orEq);
 		ctx->define_instruction(0, rs_instruction::andEq, df_andEq);
 		ctx->define_instruction(0, rs_instruction::branch, df_branch);
+		ctx->define_instruction(0, rs_instruction::clearParams, df_clearParams);
 		ctx->define_instruction(0, rs_instruction::call, df_call);
 		ctx->define_instruction(0, rs_instruction::jump, df_jump);
 		ctx->define_instruction(0, rs_instruction::ret, df_ret);
@@ -1179,5 +1289,10 @@ namespace rs {
 		ctx->define_instruction(rs_builtin_type::t_string, rs_instruction::prop, str_prop);
 		ctx->define_instruction(rs_builtin_type::t_string, rs_instruction::add, str_add);
 		ctx->define_instruction(rs_builtin_type::t_string, rs_instruction::addEq, str_addEq);
+	}
+
+	void add_class_instruction_set(context* ctx) {
+		ctx->define_instruction(rs_builtin_type::t_class, rs_instruction::prop, class_prop);
+		ctx->define_instruction(rs_builtin_type::t_class, rs_instruction::propAssign, class_propAssign);
 	}
 };

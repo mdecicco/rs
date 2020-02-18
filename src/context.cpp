@@ -16,6 +16,7 @@ namespace rs {
 		add_number_instruction_set(this);
 		add_object_instruction_set(this);
 		add_string_instruction_set(this);
+		add_class_instruction_set(this);
 		memcpy(&m_params, &params, sizeof(context_parameters));
 	}
 
@@ -26,7 +27,26 @@ namespace rs {
 	}
 
 	bool context::add_code(const string& code) {
-		return compiler->compile(code, *instructions);
+		integer_type entry = instructions->count();
+		instructions->backup();
+
+		if (compiler->compile(code, *instructions)) {
+			try {
+				execution_state es(m_params, this);
+				es.execute(entry);
+				instructions->commit();
+				return true;
+			} catch (const runtime_exception& e) {
+				if (e.has_source_info) {
+					printf("%s:%d:%d: %s\n%s\n", e.file.c_str(), e.line + 1, e.col + 1, e.text.c_str(), e.lineText.c_str());
+					for (i64 c = 0;c < i64(e.col);c++) printf(" ");
+					printf("^\n");
+				} else printf("%s\n", e.text.c_str());
+			}
+		}
+
+		instructions->restore();
+		return false;
 	}
 
 	bool context::execute(const string& code, context_memory::mem_var& result) {

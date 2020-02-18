@@ -38,6 +38,7 @@ void print_instructions(const rs::context& ctx) {
 		"inc",
 		"dec",
 		"branch",
+		"clearParams",
 		"call",
 		"jump",
 		"ret",
@@ -162,7 +163,6 @@ int main(int arg_count, const char** args) {
 		"class Test {"
 			"constructor(g) {"
 				"this.a = g;"
-				"return;"
 			"}"
 			"test() {"
 				"return this.a;"

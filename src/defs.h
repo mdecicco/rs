@@ -42,6 +42,7 @@ namespace rs {
 		inc,
 		dec,
 		branch,
+		clearParams,
 		call,
 		jump,
 		ret,
