@@ -71,9 +71,21 @@ namespace rs {
 	}
 	inline void df_newObj(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
-		auto obj = new script_object(ctx);
-		obj->set_id(ctx->memory->set(rs_builtin_type::t_object, sizeof(script_object*), obj));
-		state->registers()[rs_register::lvalue] = obj->id();
+		if (i->arg_count > 0) {
+			if (i->arg_is_register[0]) {
+				auto obj = new script_object(ctx);
+				obj->set_id(ctx->memory->set(rs_builtin_type::t_object, sizeof(script_object*), obj));
+				state->registers()[i->args[0].reg] = obj->id();
+			} else {
+				auto obj = new script_object(ctx);
+				obj->set_id(i->args[0].var);
+				ctx->memory->set(i->args[0].var, rs_builtin_type::t_object, sizeof(script_object*), obj);
+			}
+		} else {
+			auto obj = new script_object(ctx);
+			obj->set_id(ctx->memory->set(rs_builtin_type::t_object, sizeof(script_object*), obj));
+			state->registers()[rs_register::lvalue] = obj->id();
+		}
 	}
 	inline void df_prop(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
@@ -283,7 +295,15 @@ namespace rs {
 		if (i->arg_is_register[0]) func_var = ctx->memory->get(registers[i->args[0].reg]);
 		else func_var = ctx->memory->get(i->args[0].var);
 
-		script_function* func = (script_function*)func_var.data;
+		script_function* func = nullptr;
+		bool is_prototype_constructor = false;
+		if (func_var.type == rs_builtin_type::t_class) {
+			object_prototype* proto = (object_prototype*)func_var.data;
+			func = proto->constructor();
+			is_prototype_constructor = true;
+		}
+
+		if (!func) func = (script_function*)func_var.data;
 		if (func->cpp_callback) {
 			script_object* this_obj = nullptr;
 			variable_id this_obj_id = registers[rs_register::this_obj];
@@ -1015,7 +1035,8 @@ namespace rs {
 			}
 		}
 
-		registers[rs_register::lvalue] = prop_id;
+		if (i->arg_is_register[0]) registers[i->args[0].reg] = prop_id;
+		else registers[rs_register::lvalue] = prop_id;
 	}
 	inline void obj_propAssign(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
@@ -1055,7 +1076,8 @@ namespace rs {
 			prop_id = obj->define_property(propName, rs_builtin_type::t_null, 0, nullptr);
 		}
 
-		registers[rs_register::lvalue] = prop_id;
+		if (i->arg_is_register[0]) registers[i->args[0].reg] = prop_id;
+		else registers[rs_register::lvalue] = prop_id;
 	}
 
 	inline void str_add(execution_state* state, instruction* i) {
@@ -1173,8 +1195,9 @@ namespace rs {
 				);
 			}
 		}
-
-		registers[rs_register::lvalue] = prop_id;
+		
+		if (i->arg_is_register[0]) registers[i->args[0].reg] = prop_id;
+		else registers[rs_register::lvalue] = prop_id;
 	}
 	inline void class_propAssign(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
@@ -1220,7 +1243,8 @@ namespace rs {
 			}
 		}
 
-		registers[rs_register::lvalue] = prop_id;
+		if (i->arg_is_register[0]) registers[i->args[0].reg] = prop_id;
+		else registers[rs_register::lvalue] = prop_id;
 	}
 
 

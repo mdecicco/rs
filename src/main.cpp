@@ -9,8 +9,8 @@ void print_instructions(const rs::context& ctx) {
 	const char* instructions[] = {
 		"null",
 		"store",
-		"addProto",
 		"newObj",
+		"addProto",
 		"prop",
 		"propAssign",
 		"move",

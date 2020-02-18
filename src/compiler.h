@@ -52,6 +52,7 @@ namespace rs {
 
 				function_ref* currentFunction;
 				object_prototype* currentPrototype;
+				bool constructingPrototype;
 
 				void push_locals();
 				void pop_locals();
@@ -66,13 +67,15 @@ namespace rs {
 			context* m_script_context;
 			void initialize_tokenizer(tokenizer& t);
 			void check_declaration(tokenizer& t, parse_context& ctx, tokenizer::token& declaration);
-			function_ref* compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions);
+			function_ref* compile_function(tokenizer& t, parse_context& ctx, instruction_array& instructions, rs_register destination = rs_register::lvalue, bool allow_name = true);
 			object_prototype* compile_class(tokenizer& t, parse_context& ctx, instruction_array& instructions);
-			bool compile_expression(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
+			bool compile_expression(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected, rs_register destination = rs_register::rvalue, bool compile_lhs = true);
+			bool compile_expression_value(rs_register destination, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected, bool& value_is_const);
+			bool compile_accessor_chain(rs_register destination, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool is_nested);
 			bool compile_statement(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool parseSemicolon = true);
 			bool compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool& pushed_state);
 			bool compile_parameter_list(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
-			bool compile_json(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
+			bool compile_json(rs_register destination, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 	};
 };
 

@@ -144,8 +144,8 @@ namespace rs {
 		static const char* istr[] = {
 			"null",
 			"store",
-			"addProto",
 			"newObj",
+			"addProto",
 			"prop",
 			"propAssign",
 			"move",
