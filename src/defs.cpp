@@ -43,12 +43,11 @@ namespace rs {
 		type = rs_builtin_type::t_bool;
 		data.b = b;
 	}
-	/*
+
 	register_type::operator variable_id&() { return data.v; }
 	register_type::operator integer_type&() { return data.i; }
 	register_type::operator decimal_type&() { return data.d; }
 	register_type::operator u8&() { return data.b; }
-	*/
 
 	void register_type::copy(context* ctx, size_t* size, type_id* _type, void** _data) {
 		switch (type) {
@@ -63,7 +62,8 @@ namespace rs {
 				*size = v.size;
 				*_type = v.type;
 				*_data = nullptr;
-				if (v.size) {
+				if (type_is_ptr(v.type)) *_data = v.data;
+				else if (v.size) {
 					*_data = new u8[v.size];
 					memcpy(*_data, v.data, v.size);
 				}

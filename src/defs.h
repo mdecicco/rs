@@ -104,6 +104,7 @@ namespace rs {
 		t_class,
 		t_function,
 		t_object,
+		t_array,
 		script_type_base
 	};
 
@@ -118,10 +119,11 @@ namespace rs {
 
 	inline bool type_is_ptr(type_id type) {
 		return 
-			type == rs_builtin_type::t_object
-			|| type == rs_builtin_type::t_string
+			   type == rs_builtin_type::t_string
+			|| type == rs_builtin_type::t_class
 			|| type == rs_builtin_type::t_function
-			|| type == rs_builtin_type::t_class;
+			|| type == rs_builtin_type::t_object
+			|| type == rs_builtin_type::t_array;
 	}
 
 	#ifdef SCRIPTS_USE_64BIT_INTEGERS
@@ -162,12 +164,10 @@ namespace rs {
 			register_type(decimal_type d);
 			register_type(bool b);
 
-			/*
 			operator variable_id&();
 			operator integer_type&();
 			operator decimal_type&();
 			operator u8&();
-			*/
 
 			void copy(context* ctx, size_t* size, type_id* type, void** data);
 			mem_var ref(context* ctx);

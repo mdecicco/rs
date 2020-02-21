@@ -470,7 +470,7 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			registers[rs_register::rvalue] = fmod(av, bv);
+			registers[rs_register::rvalue] = (decimal_type)fmod(av, bv);
 		}
 	}
 	inline void num_pow(execution_state* state, instruction* i) {
@@ -504,7 +504,7 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			registers[rs_register::rvalue] = ::pow(av, bv);
+			registers[rs_register::rvalue] = (decimal_type)::pow(av, bv);
 		}
 	}
 	inline void num_less(execution_state* state, instruction* i) {
