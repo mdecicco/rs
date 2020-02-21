@@ -9,18 +9,20 @@ namespace rs {
 
 			static variable_id gen_var_id() { return next_var_id++; }
 
-			struct mem_var {
-				void* data;
-				size_t size;
-				type_id type;
-				bool external;
-			};
-
 			void set(variable_id id, type_id type, size_t size, void* data);
 			variable_id set(type_id type, size_t size, void* data);
 			variable_id set_static(type_id type, size_t size, void* data);
 			variable_id inject(type_id type, size_t size, void* ptr);
 			mem_var& get(variable_id id);
+
+			// callback signature MUST match 'bool (*)(const mem_var&)'
+			template <typename F>
+			variable_id find_static(F&& find_callback) const {
+				for (auto& v : m_static_vars) {
+					if (find_callback(v.second)) return v.first;
+				}
+				return 0;
+			}
 
 			void deallocate(variable_id id);
 
@@ -34,5 +36,5 @@ namespace rs {
 			static mem_var null;
 	};
 
-	std::string var_tostring(context_memory::mem_var& v);
+	std::string var_tostring(mem_var& v);
 };

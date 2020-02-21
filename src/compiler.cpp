@@ -25,6 +25,10 @@ namespace rs {
 					tok.col
 				);
 			}
+			vid = ctx->memory->find_static([&v](const mem_var& mv) {
+				return mv.type == rs_builtin_type::t_decimal && (*(decimal_type*)mv.data) == v;
+			});
+			if (vid) return vid;
 			vid = ctx->memory->set_static(
 				rs_builtin_type::t_decimal,
 				sizeof(decimal_type),
@@ -42,6 +46,10 @@ namespace rs {
 					tok.col
 				);
 			}
+			vid = ctx->memory->find_static([&v](const mem_var& mv) {
+				return mv.type == rs_builtin_type::t_integer && (*(integer_type*)mv.data) == v;
+			});
+			if (vid) return vid;
 			vid = ctx->memory->set_static(
 				rs_builtin_type::t_integer,
 				sizeof(integer_type),
@@ -53,6 +61,13 @@ namespace rs {
 	}
 
 	variable_id define_static_string(context* ctx, const string& t) {
+		variable_id existing = ctx->memory->find_static([&t](const mem_var& mv) {
+			if (mv.type != rs_builtin_type::t_string) return false;
+			string s((char*)mv.data, mv.size);
+			return s == t;
+		});
+		if (existing) return existing;
+
 		char* str = new char[t.length()];
 		memcpy(str, t.c_str(), t.length());
 		return ctx->memory->set_static(

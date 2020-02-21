@@ -4,7 +4,7 @@
 #include <parse_utils.h>
 
 namespace rs {
-	context_memory::mem_var context_memory::null = { nullptr, 0, 0, true };
+	mem_var context_memory::null = { nullptr, 0, 0, true };
 	variable_id context_memory::next_var_id = 1;
 
 	context_memory::context_memory(const context_parameters& params) {
@@ -93,7 +93,7 @@ namespace rs {
 		return id;
 	}
 
-	context_memory::mem_var& context_memory::get(variable_id id) {
+	mem_var& context_memory::get(variable_id id) {
 		if (m_vars.count(id) != 0) return m_vars[id];
 		if (m_static_vars.count(id) != 0) return m_static_vars[id];
 
@@ -111,7 +111,7 @@ namespace rs {
 	}
 
 
-	std::string var_tostring(rs::context_memory::mem_var& v) {
+	std::string var_tostring(rs::mem_var& v) {
 		std::string val;
 		if (!v.data) val = "undefined";
 		else {

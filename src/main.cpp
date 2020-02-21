@@ -5,107 +5,6 @@
 #include <script_object.h>
 #include <script_function.h>
 
-void print_instructions(const rs::context& ctx) {
-	const char* instructions[] = {
-		"null",
-		"store",
-		"newObj",
-		"addProto",
-		"prop",
-		"propAssign",
-		"move",
-		"add",
-		"sub",
-		"mul",
-		"div",
-		"mod",
-		"pow",
-		"or",
-		"and",
-		"less",
-		"greater",
-		"addEq",
-		"subEq",
-		"mulEq",
-		"divEq",
-		"modEq",
-		"powEq",
-		"orEq",
-		"andEq",
-		"lessEq",
-		"greaterEq",
-		"compare",
-		"inc",
-		"dec",
-		"branch",
-		"clearParams",
-		"call",
-		"jump",
-		"ret",
-		"pushState",
-		"popState",
-		"pushScope",
-		"popScope"
-	};
-	const char* registers[] = {
-		"null",
-		"this_obj",
-		"return_val",
-		"return_address",
-		"instruction_address",
-		"lvalue",
-		"rvalue",
-		"parameter0",
-		"parameter1",
-		"parameter2",
-		"parameter3",
-		"parameter4",
-		"parameter5",
-		"parameter6",
-		"parameter7",
-		"parameter_count"
-	};
-
-	printf("--- raw instructions ---\n");
-	for (int i = 0;i < ctx.instructions->count();i++) {
-		auto inst = (*ctx.instructions)[i];
-		printf("%d: %s", i, instructions[inst.code]);
-		for (int a = 0;a < inst.arg_count;a++) {
-			if (inst.arg_is_register[a]) printf(" $%s", registers[inst.args[a].reg]);
-			else {
-				auto& v = ctx.memory->get(inst.args[a].var);
-				printf(" #%llu (%s)", inst.args[a].var, rs::var_tostring(v).c_str());
-			}
-		}
-		printf("\n");
-	}
-
-	/*
-	printf("--- instructions with code ---\n");
-
-	int last_line = -1;
-	int last_col = -1;
-	for (int i = 0;i < ctx.instructions->count();i++) {
-	auto inst = (*ctx.instructions)[i];
-	auto src = ctx.instructions->instruction_source(i);
-	if (src.line != last_line || src.col != last_col) printf("\n\n%s\n", src.lineText.c_str());
-	last_line = src.line;
-	last_col = src.col;
-	for (int c = 0;c < int(src.col);c++) printf(" ");
-	printf("^ ");
-	printf(instructions[inst.code]);
-	for (int a = 0;a < inst.arg_count;a++) {
-	if (inst.arg_is_register[a]) printf(" $%s", registers[inst.args[a].reg]);
-	else {
-	auto& v = ctx.memory->get(inst.args[a].var);
-	printf(" #%llu (%s)", inst.args[a].var, var_to_string(v).c_str());
-	}
-	}
-	printf("\n");
-	}
-	*/
-}
-
 class test : public rs::script_object {
 	public:
 		test(rs::context* ctx) : rs::script_object(ctx) {
@@ -125,15 +24,14 @@ class test : public rs::script_object {
 
 rs::variable_id test_func(rs::func_args* args) {
 	std::string str;
-	args->parameters.for_each([&str](rs::func_args::arg* arg) {
-		if (arg->id == 0) return false;
-
+	args->parameters.for_each([&args, &str](rs::register_type* arg) {
+		rs::mem_var mv = arg->ref(args->context);
 		if (str.length() > 0) str += " ";
-		str += rs::var_tostring(arg->var);
+		str += rs::var_tostring(mv);
 		return true;
 	});
 
-	rs::context_memory::mem_var mv;
+	rs::mem_var mv;
 	memset(&mv, 0, sizeof(mv));
 	if (args->self) mv = args->context->memory->get(args->self->id());
 	rs::integer_type result = printf("----%s: %s\n", rs::var_tostring(mv).c_str(), str.c_str());
@@ -172,15 +70,9 @@ int main(int arg_count, const char** args) {
 		"};\n"
 	);
 
-	print_instructions(ctx);
-
-	printf("press enter to continue\n");
-	char c[4] = { 0 };
-	fgets(c, 4, stdin);
-
 	char input[1024] = { 0 };
 	system("cls");
-	rs::context_memory::mem_var result = { 0 };
+	rs::mem_var result = { 0 };
 	while (input[0] != 'q') {
 		result.data = nullptr;
 		result.size = 0;

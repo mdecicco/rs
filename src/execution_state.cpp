@@ -71,12 +71,19 @@ namespace rs {
 			print_instruction(m_current_instruction_idx, instruction);
 			if (instruction.code == rs_instruction::null_instruction) continue;
 
+
 			const context::instruction_set* iset = default_iset;
 			if (instruction.arg_count > 0) {
-				context_memory::mem_var ba;
-				if (instruction.arg_is_register[0]) ba = m_ctx->memory->get(registers[instruction.args[0].reg]);
-				else ba = m_ctx->memory->get(instruction.args[0].var);
-				iset = m_ctx->get_instruction_set(ba.type);
+				if (instruction.arg_is_register[0]) {
+					register_type& reg = registers[instruction.args[0].reg];
+					if (reg.type == rs_builtin_type::t_null) {
+						mem_var ba = m_ctx->memory->get(reg.data.v);
+						iset = m_ctx->get_instruction_set(ba.type);
+					} else iset = m_ctx->get_instruction_set(reg.type);
+				} else {
+					mem_var ba = m_ctx->memory->get(instruction.args[0].var);
+					iset = m_ctx->get_instruction_set(ba.type);
+				}
 			}
 			
 
@@ -129,7 +136,7 @@ namespace rs {
 		now[rs_register::instruction_address] = prev[rs_register::instruction_address];
 		now[persist] = prev[persist];
 
-		m_ctx->memory->deallocate(prev[rs_register::return_address]);
+		m_ctx->memory->deallocate(prev[rs_register::return_address].data.v);
 		memset(prev, 0, rs_register::register_count * sizeof(rs_register));
 
 	}
@@ -213,9 +220,30 @@ namespace rs {
 		printf(istr[i.code]);
 		for (int a = 0;a < i.arg_count;a++) {
 			if (i.arg_is_register[a]) {
-				variable_id vid = registers()[i.args[a].reg];
-				auto& v = m_ctx->memory->get(vid);
-				printf(" $%s (#%llu) (%s)", rstr[i.args[a].reg], vid, var_tostring(v).c_str());
+				register_type& reg = registers()[i.args[a].reg];
+				if (reg.type == rs_builtin_type::t_null) {
+					auto& v = m_ctx->memory->get(reg.data.v);
+					printf(" $%s (#%llu) (%s)", rstr[i.args[a].reg], reg.data.v, var_tostring(v).c_str());
+				} else {
+					switch (reg.type) {
+						case rs_builtin_type::t_integer: {
+							printf(" $%s (%d)", rstr[i.args[a].reg], reg.data.i);
+							break;
+						}
+						case rs_builtin_type::t_decimal: {
+							printf(" $%s (%f)", rstr[i.args[a].reg], reg.data.d);
+							break;
+						}
+						case rs_builtin_type::t_bool: {
+							printf(" $%s (%s)", rstr[i.args[a].reg], reg.data.b ? "true" : "false");
+							break;
+						}
+						default: {
+							printf(" $%s (<invalid value>)", rstr[i.args[a].reg]);
+							break;
+						}
+					};
+				}
 			}
 			else {
 				auto& v = m_ctx->memory->get(i.args[a].var);

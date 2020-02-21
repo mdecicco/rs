@@ -107,7 +107,6 @@ namespace rs {
 		script_type_base
 	};
 
-	typedef uint64_t	register_type;
 	typedef uint64_t	variable_id;
 	typedef uint64_t	u64;
 	typedef int64_t		i64;
@@ -115,7 +114,7 @@ namespace rs {
 	typedef int32_t		i32;
 	typedef uint16_t	u16;
 	typedef uint8_t		u8;
-	typedef uint16_t	type_id;
+	typedef uint8_t		type_id;
 
 	inline bool type_is_ptr(type_id type) {
 		return 
@@ -147,10 +146,46 @@ namespace rs {
 			#define rs_decimal_min FLT_MIN
 	#endif
 
-	extern const size_t max_variable_size;
-
+	struct mem_var {
+		void* data;
+		size_t size;
+		type_id type;
+		bool external;
+	};
 
 	class context;
+	class register_type {
+		public:
+			register_type();
+			register_type(variable_id v);
+			register_type(integer_type i);
+			register_type(decimal_type d);
+			register_type(bool b);
+
+			/*
+			operator variable_id&();
+			operator integer_type&();
+			operator decimal_type&();
+			operator u8&();
+			*/
+
+			void copy(context* ctx, size_t* size, type_id* type, void** data);
+			mem_var ref(context* ctx);
+
+
+			type_id type;
+			union {
+				variable_id v;
+				integer_type i;
+				decimal_type d;
+				u8 b;
+			} data;
+	};
+
+	extern const size_t max_variable_size;
+	extern const size_t type_sizes[];
+
+
 	struct context_parameters {
 		context* ctx;
 		struct {

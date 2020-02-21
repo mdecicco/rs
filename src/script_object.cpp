@@ -60,7 +60,7 @@ namespace rs {
 		if (call_constructor) {
 			auto constructor = prototype->constructor();
 			if (constructor) {
-				context_memory::mem_var result;
+				mem_var result;
 				m_context->call_function(constructor, m_id, args, arg_count, result);
 			}
 		}

@@ -15,10 +15,10 @@ namespace rs {
 		context* context;
 		execution_state* state;
 		struct arg {
-			context_memory::mem_var var;
+			mem_var var;
 			variable_id id;
 		};
-		dynamic_pod_array<arg> parameters;
+		dynamic_pod_array<register_type> parameters;
 	};
 
 	class script_function {

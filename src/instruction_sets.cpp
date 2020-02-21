@@ -10,8 +10,87 @@ using namespace std;
 #define min(a, b) ((a) > (b) ? (b) : (a))
 
 namespace rs {
-	using mem_var = context_memory::mem_var;
 	using instruction = instruction_array::instruction;
+
+	template <typename T>
+	T cast_param(context* ctx, register_type* registers, instruction* i, u8 arg_idx) {
+		if (i->arg_is_register[arg_idx]) {
+			register_type& reg = registers[i->args[arg_idx].reg];
+			if (reg.type == rs_builtin_type::t_null) {
+				mem_var& v = ctx->memory->get(reg.data.v);
+				return (T)v.data;
+			} else {
+				return (T)&reg.data;
+			}
+		} else {
+			mem_var& v = ctx->memory->get(i->args[arg_idx].var);
+			return (T)v.data;
+		}
+
+		return T(0);
+	}
+
+	mem_var cast_param(context* ctx, register_type* registers, instruction* i, u8 arg_idx) {
+		if (i->arg_is_register[arg_idx]) return registers[i->args[arg_idx].reg].ref(ctx);
+		return ctx->memory->get(i->args[arg_idx].var);
+	}
+
+	bool param_truthiness(context* ctx, register_type* registers, instruction* i, u8 arg_idx) {
+		if (i->arg_is_register[arg_idx]) {
+			register_type& reg = registers[i->args[arg_idx].reg];
+			if (reg.type == rs_builtin_type::t_null) {
+				mem_var& v = ctx->memory->get(reg.data.v);
+				for (size_t x = 0;x < v.size;x++) {
+					if (((u8*)v.data)[x]) return true;
+				}
+				return false;
+			} else {
+				switch (reg.type) {
+				case rs_builtin_type::t_integer: return reg.data.i != integer_type(0);
+				case rs_builtin_type::t_decimal: return reg.data.d != decimal_type(0);
+				case rs_builtin_type::t_bool: return reg.data.b;
+				default: return false;
+				};
+			}
+		} else {
+			mem_var& v = ctx->memory->get(i->args[arg_idx].var);
+			for (size_t x = 0;x < v.size;x++) {
+				if (((u8*)v.data)[x]) return true;
+			}
+			return false;
+		}
+
+		return false;
+	}
+
+	string param_tostring(context* ctx, register_type* registers, instruction* i, u8 arg_idx) {
+		if (i->arg_is_register[arg_idx]) {
+			register_type& reg = registers[i->args[arg_idx].reg];
+			if (reg.type == rs_builtin_type::t_null) return var_tostring(ctx->memory->get(reg.data.v));
+			else {
+				switch (reg.type) {
+					case rs_builtin_type::t_integer: {
+						return format("%d", reg.data.i);
+						break;
+					}
+					case rs_builtin_type::t_decimal: {
+						return format("%f", reg.data.d);
+						break;
+					}
+					case rs_builtin_type::t_bool: {
+						return format("%s", reg.data.b ? "true" : "false");
+						break;
+					}
+					default: {
+						return "<invalid value>";
+						break;
+					}
+				};
+			}
+		} else return var_tostring(ctx->memory->get(i->args[arg_idx].var));
+
+		return "<invalid value>";
+	}
 
 	inline void vstore(context* ctx, variable_id dst, variable_id src) {
 		mem_var src_v = ctx->memory->get(src);
@@ -36,35 +115,26 @@ namespace rs {
 	}
 
 	inline void nan_result(context* ctx, register_type* registers) {
-		decimal_type nan = rs_nan;
-		variable_id nan_id = ctx->memory->set(rs_builtin_type::t_decimal, sizeof(decimal_type), &nan);
-		registers[rs_register::rvalue] = nan_id;
+		registers[rs_register::rvalue] = rs_nan;
 	}
 
 	inline void df_store(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		mem_var src;
-		if (i->arg_is_register[1]) src = ctx->memory->get(registers[i->args[1].reg]);
-		else src = ctx->memory->get(i->args[1].var);
+		variable_id dst = 0;
+		if (i->arg_is_register[0]) dst = registers[i->args[0].reg].data.v;
+		else dst = i->args[0].var;
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
-
-		ctx->memory->set(dst_id, src.type, src.size, src.data);
+		if (i->arg_is_register[1]) {
+			register_type& src_reg = registers[i->args[1].reg];
+			if (src_reg.type == rs_builtin_type::t_null) vstore(ctx, dst, src_reg.data.v);
+			else ctx->memory->set(dst, src_reg.type, type_sizes[src_reg.type], &src_reg.data);
+		} else vstore(ctx, dst, i->args[1].var);
 	}
 	inline void df_addProto(execution_state* state, instruction* i) {
-		context* ctx = state->ctx();
-		register_type* registers = state->registers();
-
-		mem_var a;
-		if (i->arg_is_register[0]) a = ctx->memory->get(registers[i->args[0].reg]);
-		else a = ctx->memory->get(i->args[0].var);
-
 		throw runtime_exception(
-			format("'%s' is not an object", var_tostring(a).c_str()),
+			format("'%s' is not an object", param_tostring(state->ctx(), state->registers(), i, 0).c_str()),
 			state,
 			*i
 		);
@@ -88,29 +158,15 @@ namespace rs {
 		}
 	}
 	inline void df_prop(execution_state* state, instruction* i) {
-		context* ctx = state->ctx();
-		register_type* registers = state->registers();
-
-		mem_var a;
-		if (i->arg_is_register[0]) a = ctx->memory->get(registers[i->args[0].reg]);
-		else a = ctx->memory->get(i->args[0].var);
-
 		throw runtime_exception(
-			format("'%s' is not an object", var_tostring(a).c_str()),
+			format("'%s' is not an object", param_tostring(state->ctx(), state->registers(), i, 0).c_str()),
 			state,
 			*i
 		);
 	}
 	inline void df_propAssign(execution_state* state, instruction* i) {
-		context* ctx = state->ctx();
-		register_type* registers = state->registers();
-
-		mem_var a;
-		if (i->arg_is_register[0]) a = ctx->memory->get(registers[i->args[0].reg]);
-		else a = ctx->memory->get(i->args[0].var);
-
 		throw runtime_exception(
-			format("'%s' is not an object", var_tostring(a).c_str()),
+			format("'%s' is not an object", param_tostring(state->ctx(), state->registers(), i, 0).c_str()),
 			state,
 			*i
 		);
@@ -126,126 +182,25 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		mem_var a;
-		if (i->arg_is_register[1]) a = ctx->memory->get(registers[i->args[1].reg]);
-		else a = ctx->memory->get(i->args[1].var);
-
-		mem_var b;
-		if (i->arg_is_register[0]) b = ctx->memory->get(registers[i->args[0].reg]);
-		else b = ctx->memory->get(i->args[0].var);
-
-		size_t x = 0;
-		if (a.size) {
-			for (;x < a.size;x++) {
-				if (((u8*)a.data)[x]) {
-					u8 v = 1;
-					registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_bool, 1, &v);
-					// todo: add allocated rvalue to scope allocated variable ids 
-					return;
-				}
-			}
-		}
-
-		if (b.size) {
-			x = 0;
-			for (;x < b.size;x++) {
-				if (((u8*)b.data)[x]) {
-					u8 v = 1;
-					registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_bool, 1, &v);
-					// todo: add allocated rvalue to scope allocated variable ids 
-					return;
-				}
-			}
-		}
-
-		u8 v = 0;
-		registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_bool, 1, &v);
-		// todo: add allocated rvalue to scope allocated variable ids 
+		registers[rs_register::rvalue] = param_truthiness(ctx, registers, i, 0) || param_truthiness(ctx, registers, i, 1);
 	}
 	inline void df_and(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		mem_var a;
-		if (i->arg_is_register[1]) a = ctx->memory->get(registers[i->args[1].reg]);
-		else a = ctx->memory->get(i->args[1].var);
-
-		mem_var b;
-		if (i->arg_is_register[0]) b = ctx->memory->get(registers[i->args[0].reg]);
-		else b = ctx->memory->get(i->args[0].var);
-
-		size_t x = 0;
-		if (a.size && b.size) {
-			for (;x < a.size;x++) {
-				if (((u8*)a.data)[x]) {
-					break;
-				}
-			}
-
-			if (x < a.size) {
-				x = 0;
-				for (;x < b.size;x++) {
-					if (((u8*)b.data)[x]) {
-						break;
-					}
-				}
-				if (x < b.size) {
-					u8 v = 1;
-					registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_bool, 1, &v);
-					// todo: add allocated rvalue to scope allocated variable ids 
-					return;
-				}
-			}
-		}
-
-		u8 v = 0;
-		registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_bool, 1, &v);
-		// todo: add allocated rvalue to scope allocated variable ids 
+		registers[rs_register::rvalue] = param_truthiness(ctx, registers, i, 0) && param_truthiness(ctx, registers, i, 1);
 	}
-	inline void df_compare(execution_state* state, instruction* i) {
-		context* ctx = state->ctx();
-		register_type* registers = state->registers();
-
-		mem_var a;
-		if (i->arg_is_register[1]) a = ctx->memory->get(registers[i->args[1].reg]);
-		else a = ctx->memory->get(i->args[1].var);
-
-		mem_var b;
-		if (i->arg_is_register[0]) b = ctx->memory->get(registers[i->args[0].reg]);
-		else b = ctx->memory->get(i->args[0].var);
-
-		if (a.size && b.size && a.size == b.size) {
-			for (size_t x = 0;x < a.size;x++) {
-				if (((u8*)a.data)[x] != ((u8*)b.data)[x]) {
-					u8 v = 0;
-					registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_bool, 1, &v);
-					// todo: add allocated rvalue to scope allocated variable ids 
-					return;
-				}
-			}
-
-			u8 v = 1;
-			registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_bool, 1, &v);
-			// todo: add allocated rvalue to scope allocated variable ids 
-			return;
-		}
-
-		u8 v = 0;
-		registers[rs_register::rvalue] = ctx->memory->set(rs_builtin_type::t_bool, 1, &v);
-		// todo: add allocated rvalue to scope allocated variable ids 
-	}
-
 	inline void df_orEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
 		df_or(state, i);
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
+		variable_id dst = 0;
+		if (i->arg_is_register[0]) dst = registers[i->args[0].reg].data.v;
+		else dst = i->args[0].var;
 
-		vstore(ctx, dst_id, registers[rs_register::rvalue]);
+		ctx->memory->set(dst, rs_builtin_type::t_bool, sizeof(u8), &registers[rs_register::rvalue].data.b);
 
 	}
 	inline void df_andEq(execution_state* state, instruction* i) {
@@ -254,45 +209,39 @@ namespace rs {
 
 		df_and(state, i);
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
+		variable_id dst = 0;
+		if (i->arg_is_register[0]) dst = registers[i->args[0].reg].data.v;
+		else dst = i->args[0].var;
 
-		vstore(ctx, dst_id, registers[rs_register::rvalue]);
+		ctx->memory->set(dst, rs_builtin_type::t_bool, sizeof(u8), &registers[rs_register::rvalue].data.b);
 	}
 	inline void df_branch(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		mem_var cond;
-		if (i->arg_is_register[0]) cond = ctx->memory->get(registers[i->args[0].reg]);
-		else cond = ctx->memory->get(i->args[0].var);
-
-		for (size_t x = 0;x < cond.size;x++) {
-			if (((u8*)cond.data)[x]) {
-				vstore(ctx, registers[rs_register::instruction_address], i->args[1].var);
-				return;
-			}
+		if (param_truthiness(ctx, registers, i, 0)) {
+			vstore(ctx, registers[rs_register::instruction_address].data.v, i->args[1].var);
+			return;
 		}
-		vstore(ctx, registers[rs_register::instruction_address], i->args[2].var);
+		vstore(ctx, registers[rs_register::instruction_address].data.v, i->args[2].var);
 	}
 	inline void df_clearParams(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
-		registers[rs_register::parameter0] = 0;
-		registers[rs_register::parameter1] = 0;
-		registers[rs_register::parameter2] = 0;
-		registers[rs_register::parameter3] = 0;
-		registers[rs_register::parameter4] = 0;
-		registers[rs_register::parameter5] = 0;
-		registers[rs_register::parameter6] = 0;
-		registers[rs_register::parameter7] = 0;
+		registers[rs_register::parameter0] = register_type();
+		registers[rs_register::parameter1] = register_type();
+		registers[rs_register::parameter2] = register_type();
+		registers[rs_register::parameter3] = register_type();
+		registers[rs_register::parameter4] = register_type();
+		registers[rs_register::parameter5] = register_type();
+		registers[rs_register::parameter6] = register_type();
+		registers[rs_register::parameter7] = register_type();
 	}
 	inline void df_call(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 		mem_var func_var;
-		if (i->arg_is_register[0]) func_var = ctx->memory->get(registers[i->args[0].reg]);
+		if (i->arg_is_register[0]) func_var = ctx->memory->get(registers[i->args[0].reg].data.v);
 		else func_var = ctx->memory->get(i->args[0].var);
 
 		script_function* func = nullptr;
@@ -306,7 +255,7 @@ namespace rs {
 		if (!func) func = (script_function*)func_var.data;
 		if (func->cpp_callback) {
 			script_object* this_obj = nullptr;
-			variable_id this_obj_id = registers[rs_register::this_obj];
+			variable_id this_obj_id = registers[rs_register::this_obj].data.v;
 			if (this_obj_id != 0) {
 				mem_var& obj = ctx->memory->get(this_obj_id);
 				if (obj.type == rs_builtin_type::t_object) this_obj = (script_object*)obj.data;
@@ -317,33 +266,29 @@ namespace rs {
 			args.context = ctx;
 			args.self = this_obj;
 			for (u8 arg = 0;arg < 8;arg++) {
-				variable_id arg_id = registers[rs_register::parameter0 + arg];
-				args.parameters.push({
-					ctx->memory->get(arg_id),
-					arg_id
-					});
+				args.parameters.push(registers[rs_register::parameter0 + arg]);
 			}
 
 			registers[rs_register::return_value] = func->cpp_callback(&args);
 		} else {
-			vstore(ctx, registers[rs_register::return_address], registers[rs_register::instruction_address]);
+			vstore(ctx, registers[rs_register::return_address].data.v, registers[rs_register::instruction_address].data.v);
 
 			state->push_state();
 			state->push_scope();
 
-			vstore(ctx, registers[rs_register::instruction_address], func->entry_point_id);
+			vstore(ctx, registers[rs_register::instruction_address].data.v, func->entry_point_id);
 		}
 	}
 	inline void df_jump(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
-		vstore(ctx, registers[rs_register::instruction_address], i->args[0].var);
+		vstore(ctx, registers[rs_register::instruction_address].data.v, i->args[0].var);
 	}
 	inline void df_ret(execution_state* state, instruction* i) {
 		state->pop_scope();
 		state->pop_state(rs_register::null_register);
 		register_type* registers = state->registers();
-		vstore(state->ctx(), registers[rs_register::instruction_address], registers[rs_register::return_address]);
+		vstore(state->ctx(), registers[rs_register::instruction_address].data.v, registers[rs_register::return_address].data.v);
 	}
 	inline void df_pushState(execution_state* state, instruction* i) {
 		state->push_state();
@@ -362,23 +307,19 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 		
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 		) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			integer_type result = (*(integer_type*)a.data) + (*(integer_type*)b.data);
-			result_id = ctx->memory->set(type, sizeof(integer_type), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) + (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -393,37 +334,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			av += bv;
-			result_id = ctx->memory->set(type, sizeof(decimal_type), &av);
+			registers[rs_register::rvalue] = av + bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_sub(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 		) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			integer_type result = (*(integer_type*)a.data) - (*(integer_type*)b.data);
-			result_id = ctx->memory->set(type, sizeof(integer_type), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) - (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -438,37 +368,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			av -= bv;
-			result_id = ctx->memory->set(type, sizeof(decimal_type), &av);
+			registers[rs_register::rvalue] = av - bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_mul(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
-			) return nan_result(ctx, registers);
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
+		) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			integer_type result = (*(integer_type*)a.data) * (*(integer_type*)b.data);
-			result_id = ctx->memory->set(type, sizeof(integer_type), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) * (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -483,37 +402,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			av *= bv;
-			result_id = ctx->memory->set(type, sizeof(decimal_type), &av);
+			registers[rs_register::rvalue] = av * bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_div(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
-			) return nan_result(ctx, registers);
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
+		) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			integer_type result = (*(integer_type*)a.data) / (*(integer_type*)b.data);
-			result_id = ctx->memory->set(type, sizeof(integer_type), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) / (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -528,37 +436,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			av /= bv;
-			result_id = ctx->memory->set(type, sizeof(decimal_type), &av);
+			registers[rs_register::rvalue] = av / bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_mod(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 			) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			integer_type result = (*(integer_type*)a.data) % (*(integer_type*)b.data);
-			result_id = ctx->memory->set(type, sizeof(integer_type), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) % (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -573,37 +470,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			av = fmod(av, bv);
-			result_id = ctx->memory->set(type, sizeof(decimal_type), &av);
+			registers[rs_register::rvalue] = fmod(av, bv);
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_pow(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 			) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			integer_type result = ipow((*(integer_type*)a.data), (*(integer_type*)b.data));
-			result_id = ctx->memory->set(type, sizeof(integer_type), &result);
+			registers[rs_register::rvalue] = ipow((*(integer_type*)a.data), (*(integer_type*)b.data));
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -618,37 +504,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			av = ::pow(av, bv);
-			result_id = ctx->memory->set(type, sizeof(decimal_type), &av);
+			registers[rs_register::rvalue] = ::pow(av, bv);
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_less(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 			) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			u8 result = (*(integer_type*)a.data) < (*(integer_type*)b.data) ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) < (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -663,37 +538,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			u8 result = av < bv ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = av < bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_greater(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 			) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			u8 result = (*(integer_type*)a.data) > (*(integer_type*)b.data) ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) > (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -708,37 +572,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			u8 result = av > bv ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = av > bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_compare(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 			) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			u8 result = (*(integer_type*)a.data) == (*(integer_type*)b.data) ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) == (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -753,110 +606,259 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			u8 result = av == bv ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = av == bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 
 	inline void num_addEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		num_add(state, i);
+		mem_var a = ctx->memory->get(i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
+		if (
+			!a.type || !b.type || a.size == 0 || b.size == 0 ||
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
+			) return nan_result(ctx, registers);
 
-		vstore(ctx, dst_id, registers[rs_register::rvalue]);
+		type_id type = max(a.type, b.type);
+
+		if (type == rs_builtin_type::t_integer) {
+			integer_type& a_i = (*(integer_type*)a.data);
+			registers[rs_register::rvalue] = a_i += (*(integer_type*)b.data);
+		} else {
+			if (a.type != type) {
+				integer_type& av = *(integer_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av += bv;
+			} else if (b.type != type) {
+				decimal_type& av = *(decimal_type*)a.data;
+				integer_type bv = *(integer_type*)b.data;
+
+				registers[rs_register::rvalue] = av += bv;
+			} else {
+				decimal_type& av = *(decimal_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av += bv;
+			}
+		}
 	}
 	inline void num_subEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		num_sub(state, i);
+		mem_var a = ctx->memory->get(i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
+		if (
+			!a.type || !b.type || a.size == 0 || b.size == 0 ||
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
+			) return nan_result(ctx, registers);
 
-		vstore(ctx, dst_id, registers[rs_register::rvalue]);
+		type_id type = max(a.type, b.type);
+
+		if (type == rs_builtin_type::t_integer) {
+			integer_type& a_i = (*(integer_type*)a.data);
+			registers[rs_register::rvalue] = a_i -= (*(integer_type*)b.data);
+		} else {
+			if (a.type != type) {
+				integer_type& av = *(integer_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av -= bv;
+			} else if (b.type != type) {
+				decimal_type& av = *(decimal_type*)a.data;
+				integer_type bv = *(integer_type*)b.data;
+
+				registers[rs_register::rvalue] = av -= bv;
+			} else {
+				decimal_type& av = *(decimal_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av -= bv;
+			}
+		}
 	}
 	inline void num_mulEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		num_mul(state, i);
+		mem_var a = ctx->memory->get(i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
+		if (
+			!a.type || !b.type || a.size == 0 || b.size == 0 ||
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
+			) return nan_result(ctx, registers);
 
-		vstore(ctx, dst_id, registers[rs_register::rvalue]);
+		type_id type = max(a.type, b.type);
+
+		if (type == rs_builtin_type::t_integer) {
+			integer_type& a_i = (*(integer_type*)a.data);
+			registers[rs_register::rvalue] = a_i *= (*(integer_type*)b.data);
+		} else {
+			if (a.type != type) {
+				integer_type& av = *(integer_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av *= bv;
+			} else if (b.type != type) {
+				decimal_type& av = *(decimal_type*)a.data;
+				integer_type bv = *(integer_type*)b.data;
+
+				registers[rs_register::rvalue] = av *= bv;
+			} else {
+				decimal_type& av = *(decimal_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av *= bv;
+			}
+		}
 	}
 	inline void num_divEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		num_div(state, i);
+		mem_var a = ctx->memory->get(i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
+		if (
+			!a.type || !b.type || a.size == 0 || b.size == 0 ||
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
+			) return nan_result(ctx, registers);
 
-		vstore(ctx, dst_id, registers[rs_register::rvalue]);
+		type_id type = max(a.type, b.type);
+
+		if (type == rs_builtin_type::t_integer) {
+			integer_type& a_i = (*(integer_type*)a.data);
+			registers[rs_register::rvalue] = a_i /= (*(integer_type*)b.data);
+		} else {
+			if (a.type != type) {
+				integer_type& av = *(integer_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av /= bv;
+			} else if (b.type != type) {
+				decimal_type& av = *(decimal_type*)a.data;
+				integer_type bv = *(integer_type*)b.data;
+
+				registers[rs_register::rvalue] = av /= bv;
+			} else {
+				decimal_type& av = *(decimal_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av /= bv;
+			}
+		}
 	}
 	inline void num_modEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		num_mod(state, i);
+		mem_var& a = ctx->memory->get(i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
+		if (
+			!a.type || !b.type || a.size == 0 || b.size == 0 ||
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
+			) return nan_result(ctx, registers);
 
-		vstore(ctx, dst_id, registers[rs_register::rvalue]);
+		type_id type = max(a.type, b.type);
+
+		if (type == rs_builtin_type::t_integer) {
+			integer_type& a_i = (*(integer_type*)a.data);
+			registers[rs_register::rvalue] = a_i %= (*(integer_type*)b.data);
+		} else {
+			if (a.type != type) {
+				integer_type& av = *(integer_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				decimal_type result = fmod(av, bv);
+				registers[rs_register::rvalue] = result;
+
+				a.type = rs_builtin_type::t_decimal;
+				a.size = sizeof(decimal_type);
+				(*(decimal_type*)a.data) = result;
+			} else if (b.type != type) {
+				decimal_type& av = *(decimal_type*)a.data;
+				integer_type bv = *(integer_type*)b.data;
+
+				registers[rs_register::rvalue] = av = fmod(av, bv);
+			} else {
+				decimal_type& av = *(decimal_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av = fmod(av, bv);
+			}
+		}
 	}
 	inline void num_powEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		num_pow(state, i);
+		mem_var& a = ctx->memory->get(i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
-		variable_id dst_id = 0;
-		if (i->arg_is_register[0]) dst_id = registers[i->args[0].reg];
-		else dst_id = i->args[0].var;
+		if (
+			!a.type || !b.type || a.size == 0 || b.size == 0 ||
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
+			) return nan_result(ctx, registers);
 
-		vstore(ctx, dst_id, registers[rs_register::rvalue]);
+		type_id type = max(a.type, b.type);
+
+		if (type == rs_builtin_type::t_integer) {
+			integer_type& a_i = (*(integer_type*)a.data);
+			registers[rs_register::rvalue] = a_i = ipow(a_i, (*(integer_type*)b.data));
+		} else {
+			if (a.type != type) {
+				integer_type& av = *(integer_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				decimal_type result = ::pow(av, bv);
+				registers[rs_register::rvalue] = result;
+
+				a.type = rs_builtin_type::t_decimal;
+				a.size = sizeof(decimal_type);
+				(*(decimal_type*)a.data) = result;
+			} else if (b.type != type) {
+				decimal_type& av = *(decimal_type*)a.data;
+				integer_type bv = *(integer_type*)b.data;
+
+				registers[rs_register::rvalue] = av = ::pow(av, bv);
+			} else {
+				decimal_type& av = *(decimal_type*)a.data;
+				decimal_type bv = *(decimal_type*)b.data;
+
+				registers[rs_register::rvalue] = av = ::pow(av, bv);
+			}
+		}
 	}
 	inline void num_lessEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 			) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			u8 result = (*(integer_type*)a.data) <= (*(integer_type*)b.data) ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) <= (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -871,37 +873,26 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			u8 result = av <= bv ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = av <= bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_greaterEq(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		if (
 			!a.type || !b.type || a.size == 0 || b.size == 0 ||
-			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal
+			a.type > rs_builtin_type::t_decimal || b.type > rs_builtin_type::t_decimal ||
+			b.type < rs_builtin_type::t_integer
 			) return nan_result(ctx, registers);
 
 		type_id type = max(a.type, b.type);
 
-		variable_id result_id = 0;
 		if (type == rs_builtin_type::t_integer) {
-			u8 result = (*(integer_type*)a.data) >= (*(integer_type*)b.data) ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = (*(integer_type*)a.data) >= (*(integer_type*)b.data);
 		} else {
 			decimal_type av = 0;
 			decimal_type bv = 0;
@@ -916,77 +907,38 @@ namespace rs {
 				bv = *(decimal_type*)b.data;
 			}
 
-			u8 result = av >= bv ? 1 : 0;
-			result_id = ctx->memory->set(rs_builtin_type::t_bool, sizeof(u8), &result);
+			registers[rs_register::rvalue] = av >= bv;
 		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
 	}
 	inline void num_inc(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
 
 		if (!a.type || a.size == 0 || a.type > rs_builtin_type::t_decimal) return nan_result(ctx, registers);
 
-		variable_id result_id = 0;
-		if (a.type == rs_builtin_type::t_integer) {
-			integer_type result = *(integer_type*)a.data + integer_type(1);
-			result_id = ctx->memory->set(rs_builtin_type::t_integer, sizeof(integer_type), &result);
-		} else {
-			decimal_type result = *(decimal_type*)a.data + decimal_type(1);
-			result_id = ctx->memory->set(rs_builtin_type::t_decimal, sizeof(decimal_type), &result);
-		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
+		if (a.type == rs_builtin_type::t_integer) registers[rs_register::rvalue] = (*(integer_type*)a.data) += integer_type(1);
+		else registers[rs_register::rvalue] = (*(decimal_type*)a.data) += decimal_type(1);
 	}
 	inline void num_dec(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
+		mem_var a = cast_param(ctx, registers, i, 0);
 
 		if (!a.type || a.size == 0 || a.type > rs_builtin_type::t_decimal) return nan_result(ctx, registers);
 
-		variable_id result_id = 0;
-		if (a.type == rs_builtin_type::t_integer) {
-			integer_type result = *(integer_type*)a.data - integer_type(1);
-			result_id = ctx->memory->set(rs_builtin_type::t_integer, sizeof(integer_type), &result);
-		} else {
-			decimal_type result = *(decimal_type*)a.data - decimal_type(1);
-			result_id = ctx->memory->set(rs_builtin_type::t_decimal, sizeof(decimal_type), &result);
-		}
-
-		if (!result_id) nan_result(ctx, registers);
-		else {
-			registers[rs_register::rvalue] = result_id;
-		}
-		// todo: add allocated rvalue to scope allocated variable ids 
+		if (a.type == rs_builtin_type::t_integer) registers[rs_register::rvalue] = (*(integer_type*)a.data) -= integer_type(1);
+		else registers[rs_register::rvalue] = (*(decimal_type*)a.data) -= decimal_type(1);
 	}
 
 	inline void obj_addProto(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		mem_var a = ctx->memory->get(a_id);
-
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var b = ctx->memory->get(b_id);
-
-		script_object* obj = (script_object*)a.data;
-		object_prototype* proto = (object_prototype*)b.data;
+		script_object* obj = cast_param<script_object*>(ctx, registers, i, 0);
+		object_prototype* proto = cast_param<object_prototype*>(ctx, registers, i, 1);
 
 		obj->add_prototype(proto, false, nullptr, 0);
 	}
@@ -994,12 +946,8 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var a = ctx->memory->get(a_id);
-		mem_var b = ctx->memory->get(b_id);
-
 		string propName;
+		mem_var b = cast_param(ctx, registers, i, 1);
 		switch (b.type) {
 			case rs_builtin_type::t_string: {
 				propName = string((char*)b.data, b.size);
@@ -1022,7 +970,7 @@ namespace rs {
 			}
 		}
 
-		script_object* obj = (script_object*)a.data;
+		script_object* obj = cast_param<script_object*>(ctx, registers, i, 0);
 		variable_id prop_id = obj->property(propName);
 		if (prop_id == 0) {
 			prop_id = obj->proto_property(propName);
@@ -1042,35 +990,31 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var a = ctx->memory->get(a_id);
-		mem_var b = ctx->memory->get(b_id);
-
 		string propName;
+		mem_var b = cast_param(ctx, registers, i, 1);
 		switch (b.type) {
-			case rs_builtin_type::t_string: {
-				propName = string((char*)b.data, b.size);
-				break;
-			}
-			case rs_builtin_type::t_integer: {
-				propName = format("%d", *(integer_type*)b.data);
-				break;
-			}
-			case rs_builtin_type::t_decimal: {
-				propName = format("%f", *(decimal_type*)b.data);
-				break;
-			}
-			default: {
-				throw runtime_exception(
-					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
-					state,
-					*i
-				);
-			}
+		case rs_builtin_type::t_string: {
+			propName = string((char*)b.data, b.size);
+			break;
+		}
+		case rs_builtin_type::t_integer: {
+			propName = format("%d", *(integer_type*)b.data);
+			break;
+		}
+		case rs_builtin_type::t_decimal: {
+			propName = format("%f", *(decimal_type*)b.data);
+			break;
+		}
+		default: {
+			throw runtime_exception(
+				format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+				state,
+				*i
+			);
+		}
 		}
 
-		script_object* obj = (script_object*)a.data;
+		script_object* obj = cast_param<script_object*>(ctx, registers, i, 0);
 		variable_id prop_id = obj->property(propName);
 		if (prop_id == 0) {
 			prop_id = obj->define_property(propName, rs_builtin_type::t_null, 0, nullptr);
@@ -1084,8 +1028,8 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var;
+		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg].data.v : i->args[1].var;
 		mem_var av = ctx->memory->get(a_id);
 		string a((char*)av.data, av.size);
 		string b = var_tostring(ctx->memory->get(b_id));
@@ -1099,8 +1043,8 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var;
+		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg].data.v : i->args[1].var;
 		mem_var& av = ctx->memory->get(a_id);
 		string a((char*)av.data, av.size);
 		string b = var_tostring(ctx->memory->get(b_id));
@@ -1118,10 +1062,9 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
+		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg].data.v : i->args[0].var;
 		mem_var a = ctx->memory->get(a_id);
-		mem_var b = ctx->memory->get(b_id);
+		mem_var b = cast_param(ctx, registers, i, 1);
 
 		integer_type idx = -1;
 		if (b.type == rs_builtin_type::t_integer) {
@@ -1153,35 +1096,31 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var a = ctx->memory->get(a_id);
-		mem_var b = ctx->memory->get(b_id);
-
 		string propName;
+		mem_var b = cast_param(ctx, registers, i, 1);
 		switch (b.type) {
-			case rs_builtin_type::t_string: {
-				propName = string((char*)b.data, b.size);
-				break;
-			}
-			case rs_builtin_type::t_integer: {
-				propName = format("%d", *(integer_type*)b.data);
-				break;
-			}
-			case rs_builtin_type::t_decimal: {
-				propName = format("%f", *(decimal_type*)b.data);
-				break;
-			}
-			default: {
-				throw runtime_exception(
-					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
-					state,
-					*i
-				);
-			}
+		case rs_builtin_type::t_string: {
+			propName = string((char*)b.data, b.size);
+			break;
+		}
+		case rs_builtin_type::t_integer: {
+			propName = format("%d", *(integer_type*)b.data);
+			break;
+		}
+		case rs_builtin_type::t_decimal: {
+			propName = format("%f", *(decimal_type*)b.data);
+			break;
+		}
+		default: {
+			throw runtime_exception(
+				format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+				state,
+				*i
+			);
+		}
 		}
 
-		object_prototype* proto = (object_prototype*)a.data;
+		object_prototype* proto = cast_param<object_prototype*>(ctx, registers, i, 0);
 		variable_id prop_id = proto->static_variable(propName);
 		if (prop_id == 0) {
 			script_function* func = proto->static_method(propName);
@@ -1203,35 +1142,31 @@ namespace rs {
 		context* ctx = state->ctx();
 		register_type* registers = state->registers();
 
-		variable_id a_id = i->arg_is_register[0] ? registers[i->args[0].reg] : i->args[0].var;
-		variable_id b_id = i->arg_is_register[1] ? registers[i->args[1].reg] : i->args[1].var;
-		mem_var a = ctx->memory->get(a_id);
-		mem_var b = ctx->memory->get(b_id);
-
 		string propName;
+		mem_var b = cast_param(ctx, registers, i, 1);
 		switch (b.type) {
-			case rs_builtin_type::t_string: {
-				propName = string((char*)b.data, b.size);
-				break;
-			}
-			case rs_builtin_type::t_integer: {
-				propName = format("%d", *(integer_type*)b.data);
-				break;
-			}
-			case rs_builtin_type::t_decimal: {
-				propName = format("%f", *(decimal_type*)b.data);
-				break;
-			}
-			default: {
-				throw runtime_exception(
-					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
-					state,
-					*i
-				);
-			}
+		case rs_builtin_type::t_string: {
+			propName = string((char*)b.data, b.size);
+			break;
+		}
+		case rs_builtin_type::t_integer: {
+			propName = format("%d", *(integer_type*)b.data);
+			break;
+		}
+		case rs_builtin_type::t_decimal: {
+			propName = format("%f", *(decimal_type*)b.data);
+			break;
+		}
+		default: {
+			throw runtime_exception(
+				format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+				state,
+				*i
+			);
+		}
 		}
 
-		object_prototype* proto = (object_prototype*)a.data;
+		object_prototype* proto = cast_param<object_prototype*>(ctx, registers, i, 0);
 		variable_id prop_id = proto->static_variable(propName);
 		if (prop_id == 0) {
 			script_function* func = proto->static_method(propName);
@@ -1257,7 +1192,6 @@ namespace rs {
 		ctx->define_instruction(0, rs_instruction::move, df_move);
 		ctx->define_instruction(0, rs_instruction::or, df_or);
 		ctx->define_instruction(0, rs_instruction::and, df_and);
-		ctx->define_instruction(0, rs_instruction::compare, df_compare);
 		ctx->define_instruction(0, rs_instruction::orEq, df_orEq);
 		ctx->define_instruction(0, rs_instruction::andEq, df_andEq);
 		ctx->define_instruction(0, rs_instruction::branch, df_branch);
