@@ -8,4 +8,5 @@ namespace rs {
 	void add_object_instruction_set(context* ctx);
 	void add_string_instruction_set(context* ctx);
 	void add_class_instruction_set(context* ctx);
+	void add_array_instruction_set(context* ctx);
 };

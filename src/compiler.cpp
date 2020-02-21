@@ -1044,6 +1044,17 @@ namespace rs {
 			return false;
 		}
 
+		if (compile_array(destination, t, ctx, instructions, false)) {
+			if (!expected) {
+				t.commit_state();
+				instructions.commit();
+			}
+
+			value_is_const = true;
+			post_compile();
+			return true;
+		}
+
 		token const_token = t.number_constant(false);
 		if (const_token.valid()) {
 			variable_id var = define_static_number(m_script_context, const_token, ctx, t);
@@ -1192,6 +1203,14 @@ namespace rs {
 
 			prop_index = t.character(']');
 
+			instructions.append(
+				instruction(rs_instruction::popState).arg(rs_register::rvalue),
+				ctx.file,
+				prop_index.line,
+				prop_index.col,
+				t.lines[prop_index.line]
+			);
+
 			t.backup_state();
 			token assign = t.keyword(false, "=");
 			t.restore_state();
@@ -1212,14 +1231,6 @@ namespace rs {
 				assign.valid() ? assign.line : prop_index.line,
 				assign.valid() ? assign.col : prop_index.col,
 				t.lines[assign.valid() ? assign.line : prop_index.line]
-			);
-
-			instructions.append(
-				instruction(rs_instruction::popState).arg(destination),
-				ctx.file,
-				prop_index.line,
-				prop_index.col,
-				t.lines[prop_index.line]
 			);
 
 			if (!assign.valid()) compile_accessor_chain(destination, t, ctx, instructions, is_nested);
@@ -1982,7 +1993,10 @@ namespace rs {
 	bool script_compiler::compile_json(rs_register destination, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected) {
 		t.backup_state();
 		token obj_open = t.character('{', expected);
-		if (!obj_open.valid()) return false;
+		if (!obj_open.valid()) {
+			t.restore_state();
+			return false;
+		}
 
 		instructions.append(
 			instruction(rs_instruction::pushState),
@@ -2100,6 +2114,100 @@ namespace rs {
 		);
 
 		t.commit_state();
+		return true;
+	}
+
+	bool script_compiler::compile_array(rs_register destination, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected) {
+		token arr_open = t.character('[', expected);
+		if (!arr_open.valid()) {
+			return false;
+		}
+
+		instructions.append(
+			instruction(rs_instruction::pushState),
+			ctx.file,
+			arr_open.line,
+			arr_open.col,
+			t.lines[arr_open.line]
+		);
+
+		instructions.append(
+			instruction(rs_instruction::newArr).arg(rs_register::this_obj),
+			ctx.file,
+			arr_open.line,
+			arr_open.col,
+			t.lines[arr_open.line]
+		);
+
+		token arr_close = t.character(']', false);
+		token comma;
+		variable_id push_id = define_static_string(m_script_context, "push");
+		while (!t.at_end() && !arr_close.valid()) {
+			token rel_token = comma.valid() ? comma : arr_open;
+
+			compile_expression(t, ctx, instructions, true);
+			comma = t.character(',', false);
+
+			instructions.append(
+				instruction(rs_instruction::move).arg(rs_register::lvalue).arg(rs_register::this_obj),
+				ctx.file,
+				rel_token.line,
+				rel_token.col,
+				t.lines[rel_token.line]
+			);
+			instructions.append(
+				instruction(rs_instruction::prop).arg(rs_register::lvalue).arg(push_id),
+				ctx.file,
+				rel_token.line,
+				rel_token.col,
+				t.lines[rel_token.line]
+			);
+			instructions.append(
+				instruction(rs_instruction::move).arg(rs_register::parameter0).arg(rs_register::rvalue),
+				ctx.file,
+				rel_token.line,
+				rel_token.col,
+				t.lines[rel_token.line]
+			);
+			instructions.append(
+				instruction(rs_instruction::call).arg(rs_register::lvalue),
+				ctx.file,
+				rel_token.line,
+				rel_token.col,
+				t.lines[rel_token.line]
+			);
+
+			arr_close = t.character(']', !comma.valid());
+		}
+
+		if (!arr_close.valid()) {
+			throw parse_exception(
+				"Encountered unexpected end of input while parsing array body",
+				ctx.file,
+				t.lines[arr_close.line],
+				arr_close.line,
+				arr_close.col
+			);
+		}
+
+		if (destination != rs_register::this_obj) {
+			instructions.append(
+				instruction(rs_instruction::move).arg(destination).arg(rs_register::this_obj),
+				ctx.file,
+				arr_close.line,
+				arr_close.col,
+				t.lines[arr_close.line]
+			);
+		}
+
+		instructions.append(
+			instruction(rs_instruction::popState).arg(destination),
+			ctx.file,
+			arr_close.line,
+			arr_close.col,
+			t.lines[arr_close.line]
+		);
+
 		return true;
 	}
 };

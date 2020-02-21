@@ -19,6 +19,7 @@ namespace rs {
 		entry_point_id = 0;
 		entry_point = 0;
 		exit_point = 0;
+		function_id = ctx->memory->set(rs_builtin_type::t_function, sizeof(script_function*), this);
 	}
 
 	script_function::~script_function() {

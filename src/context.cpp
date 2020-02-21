@@ -3,6 +3,8 @@
 #include <execution_state.h>
 #include <script_object.h>
 #include <script_function.h>
+#include <script_array.h>
+#include <prototype.h>
 using namespace std;
 
 namespace rs {
@@ -11,13 +13,18 @@ namespace rs {
 		instructions = new instruction_array(params);
 		compiler = new script_compiler(params);
 		memory = new context_memory(params);
+		memcpy(&m_params, &params, sizeof(context_parameters));
 
 		add_default_instruction_set(this);
 		add_number_instruction_set(this);
 		add_object_instruction_set(this);
 		add_string_instruction_set(this);
 		add_class_instruction_set(this);
-		memcpy(&m_params, &params, sizeof(context_parameters));
+		add_array_instruction_set(this);
+
+
+		array_prototype = new object_prototype(this, "Array");
+		initialize_array_prototype(this, array_prototype);
 	}
 
 	context::~context() {
@@ -128,9 +135,9 @@ namespace rs {
 		m_instruction_sets[type]->callbacks[instruction] = cb;
 	}
 
-	void context::bind_function(const string& name, script_function_callback cb) {
+	script_function* context::bind_function(const string& name, script_function_callback cb) {
 		auto f = new script_function(this, name, cb);
-		f->function_id = memory->set_static(rs_builtin_type::t_function, sizeof(script_function*), f);
 		global_functions.push_back(f);
+		return f;
 	}
 };

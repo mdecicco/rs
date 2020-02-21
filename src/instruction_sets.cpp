@@ -3,6 +3,7 @@
 #include <execution_state.h>
 #include <script_object.h>
 #include <script_function.h>
+#include <script_array.h>
 #include <prototype.h>
 using namespace std;
 
@@ -132,12 +133,26 @@ namespace rs {
 			else ctx->memory->set(dst, src_reg.type, type_sizes[src_reg.type], &src_reg.data);
 		} else vstore(ctx, dst, i->args[1].var);
 	}
-	inline void df_addProto(execution_state* state, instruction* i) {
-		throw runtime_exception(
-			format("'%s' is not an object", param_tostring(state->ctx(), state->registers(), i, 0).c_str()),
-			state,
-			*i
-		);
+	inline void df_newArr(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		if (i->arg_count > 0) {
+			if (i->arg_is_register[0]) {
+				auto arr = new script_array(ctx);
+				arr->set_id(ctx->memory->set(rs_builtin_type::t_array, sizeof(script_array*), arr));
+				arr->add_prototype(ctx->array_prototype, false, nullptr, 0);
+				state->registers()[i->args[0].reg] = arr->id();
+			} else {
+				auto arr = new script_array(ctx);
+				arr->add_prototype(ctx->array_prototype, false, nullptr, 0);
+				arr->set_id(i->args[0].var);
+				ctx->memory->set(i->args[0].var, rs_builtin_type::t_array, sizeof(script_array*), arr);
+			}
+		} else {
+			auto arr = new script_array(ctx);
+			arr->add_prototype(ctx->array_prototype, false, nullptr, 0);
+			arr->set_id(ctx->memory->set(rs_builtin_type::t_array, sizeof(script_array*), arr));
+			state->registers()[rs_register::lvalue] = arr->id();
+		}
 	}
 	inline void df_newObj(execution_state* state, instruction* i) {
 		context* ctx = state->ctx();
@@ -156,6 +171,13 @@ namespace rs {
 			obj->set_id(ctx->memory->set(rs_builtin_type::t_object, sizeof(script_object*), obj));
 			state->registers()[rs_register::lvalue] = obj->id();
 		}
+	}
+	inline void df_addProto(execution_state* state, instruction* i) {
+		throw runtime_exception(
+			format("'%s' is not an object", param_tostring(state->ctx(), state->registers(), i, 0).c_str()),
+			state,
+			*i
+		);
 	}
 	inline void df_prop(execution_state* state, instruction* i) {
 		throw runtime_exception(
@@ -258,7 +280,7 @@ namespace rs {
 			variable_id this_obj_id = registers[rs_register::this_obj].data.v;
 			if (this_obj_id != 0) {
 				mem_var& obj = ctx->memory->get(this_obj_id);
-				if (obj.type == rs_builtin_type::t_object) this_obj = (script_object*)obj.data;
+				if (obj.type == rs_builtin_type::t_object || obj.type == rs_builtin_type::t_array) this_obj = (script_object*)obj.data;
 			}
 
 			func_args args;
@@ -1099,25 +1121,25 @@ namespace rs {
 		string propName;
 		mem_var b = cast_param(ctx, registers, i, 1);
 		switch (b.type) {
-		case rs_builtin_type::t_string: {
-			propName = string((char*)b.data, b.size);
-			break;
-		}
-		case rs_builtin_type::t_integer: {
-			propName = format("%d", *(integer_type*)b.data);
-			break;
-		}
-		case rs_builtin_type::t_decimal: {
-			propName = format("%f", *(decimal_type*)b.data);
-			break;
-		}
-		default: {
-			throw runtime_exception(
-				format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
-				state,
-				*i
-			);
-		}
+			case rs_builtin_type::t_string: {
+				propName = string((char*)b.data, b.size);
+				break;
+			}
+			case rs_builtin_type::t_integer: {
+				propName = format("%d", *(integer_type*)b.data);
+				break;
+			}
+			case rs_builtin_type::t_decimal: {
+				propName = format("%f", *(decimal_type*)b.data);
+				break;
+			}
+			default: {
+				throw runtime_exception(
+					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+					state,
+					*i
+				);
+			}
 		}
 
 		object_prototype* proto = cast_param<object_prototype*>(ctx, registers, i, 0);
@@ -1145,25 +1167,25 @@ namespace rs {
 		string propName;
 		mem_var b = cast_param(ctx, registers, i, 1);
 		switch (b.type) {
-		case rs_builtin_type::t_string: {
-			propName = string((char*)b.data, b.size);
-			break;
-		}
-		case rs_builtin_type::t_integer: {
-			propName = format("%d", *(integer_type*)b.data);
-			break;
-		}
-		case rs_builtin_type::t_decimal: {
-			propName = format("%f", *(decimal_type*)b.data);
-			break;
-		}
-		default: {
-			throw runtime_exception(
-				format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
-				state,
-				*i
-			);
-		}
+			case rs_builtin_type::t_string: {
+				propName = string((char*)b.data, b.size);
+				break;
+			}
+			case rs_builtin_type::t_integer: {
+				propName = format("%d", *(integer_type*)b.data);
+				break;
+			}
+			case rs_builtin_type::t_decimal: {
+				propName = format("%f", *(decimal_type*)b.data);
+				break;
+			}
+			default: {
+				throw runtime_exception(
+					format("'%s' is not a valid property name or index", var_tostring(b).c_str()),
+					state,
+					*i
+				);
+			}
 		}
 
 		object_prototype* proto = cast_param<object_prototype*>(ctx, registers, i, 0);
@@ -1182,10 +1204,57 @@ namespace rs {
 		else registers[rs_register::lvalue] = prop_id;
 	}
 
+	inline void arr_prop(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		mem_var b = cast_param(ctx, registers, i, 1);
+		if (b.type != rs_builtin_type::t_integer) {
+			obj_prop(state, i);
+			return;
+		}
+
+		integer_type idx = *(integer_type*)b.data;
+		script_array* arr = cast_param<script_array*>(ctx, registers, i, 0);
+		if (idx < 0 || idx >= arr->count()) {
+			throw runtime_exception(
+				format("Array index out of range"),
+				state,
+				*i
+			);
+		}
+
+		if (i->arg_is_register[0]) registers[i->args[0].reg] = arr->elements()[idx];
+		else registers[rs_register::lvalue] = arr->elements()[idx];
+	}
+	inline void arr_propAssign(execution_state* state, instruction* i) {
+		context* ctx = state->ctx();
+		register_type* registers = state->registers();
+
+		mem_var b = cast_param(ctx, registers, i, 1);
+		if (b.type != rs_builtin_type::t_integer) {
+			obj_propAssign(state, i);
+			return;
+		}
+
+		integer_type idx = *(integer_type*)b.data;
+		script_array* arr = cast_param<script_array*>(ctx, registers, i, 0);
+		if (idx < 0 || idx >= arr->count()) {
+			throw runtime_exception(
+				format("Array index out of range"),
+				state,
+				*i
+			);
+		}
+
+		if (i->arg_is_register[0]) registers[i->args[0].reg] = arr->elements()[idx];
+		else registers[rs_register::lvalue] = arr->elements()[idx];
+	}
 
 
 	void add_default_instruction_set(context* ctx) {
 		ctx->define_instruction(0, rs_instruction::store, df_store);
+		ctx->define_instruction(0, rs_instruction::newArr, df_newArr);
 		ctx->define_instruction(0, rs_instruction::newObj, df_newObj);
 		ctx->define_instruction(0, rs_instruction::prop, df_prop);
 		ctx->define_instruction(0, rs_instruction::propAssign, df_propAssign);
@@ -1252,5 +1321,10 @@ namespace rs {
 	void add_class_instruction_set(context* ctx) {
 		ctx->define_instruction(rs_builtin_type::t_class, rs_instruction::prop, class_prop);
 		ctx->define_instruction(rs_builtin_type::t_class, rs_instruction::propAssign, class_propAssign);
+	}
+
+	void add_array_instruction_set(context* ctx) {
+		ctx->define_instruction(rs_builtin_type::t_array, rs_instruction::prop, arr_prop);
+		ctx->define_instruction(rs_builtin_type::t_array, rs_instruction::propAssign, arr_propAssign);
 	}
 };

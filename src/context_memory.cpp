@@ -1,6 +1,7 @@
 #include <context_memory.h>
 #include <execution_state.h>
 #include <script_object.h>
+#include <script_array.h>
 #include <parse_utils.h>
 
 namespace rs {
@@ -92,6 +93,18 @@ namespace rs {
 		m_vars[id] = v;
 		return id;
 	}
+	
+	variable_id context_memory::copy(variable_id id) {
+		if (m_vars.count(id) != 0) {
+			mem_var v = m_vars[id];
+			return set(v.type, v.size, v.data);
+		}
+		if (m_static_vars.count(id) != 0) {
+			mem_var v = m_static_vars[id];
+			return set(v.type, v.size, v.data);
+		}
+		return 0;
+	}
 
 	mem_var& context_memory::get(variable_id id) {
 		if (m_vars.count(id) != 0) return m_vars[id];
@@ -155,6 +168,31 @@ namespace rs {
 					if (i > 0) val += " ";
 
 					val += "}";
+
+					break;
+				}
+				case rs::rs_builtin_type::t_array: {
+					script_array* arr = (script_array*)v.data;
+					auto properties = arr->properties();
+					auto elements = arr->elements();
+					auto element_count = arr->count();
+					val = "[ ";
+
+					u32 i = 0;
+					for (i;i < element_count;i++) {
+						if (i > 0) val += ", ";
+						val += var_tostring(arr->ctx()->memory->get(elements[i]));
+					}
+
+					for (auto& p : properties) {
+						if (i > 0) val += ", ";
+						val += p.name + ": " + var_tostring(arr->ctx()->memory->get(p.id));
+						i++;
+					}
+
+					if (i > 0) val += " ";
+
+					val += "]";
 
 					break;
 				}

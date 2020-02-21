@@ -98,4 +98,12 @@ namespace rs {
 		v.type = type;
 		return v;
 	}
+
+	variable_id register_type::persist(context* ctx) {
+		if (type == rs_builtin_type::t_null) return data.v;
+		variable_id vid = ctx->memory->set(type, type_sizes[type], &data);
+		type = rs_builtin_type::t_null;
+		data.v = vid;
+		return vid;
+	}
 };

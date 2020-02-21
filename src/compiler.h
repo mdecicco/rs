@@ -76,6 +76,7 @@ namespace rs {
 			bool compile_identifier(const var_ref& variable, const tokenizer::token& reference, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool& pushed_state);
 			bool compile_parameter_list(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 			bool compile_json(rs_register destination, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
+			bool compile_array(rs_register destination, tokenizer& t, parse_context& ctx, instruction_array& instructions, bool expected);
 	};
 };
 

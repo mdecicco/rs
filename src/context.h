@@ -36,7 +36,7 @@ namespace rs {
 				return m_instruction_sets[0];
 			}
 
-			void bind_function(const std::string& name, script_function_callback cb);
+			script_function* bind_function(const std::string& name, script_function_callback cb);
 
 			instruction_array* instructions;
 			script_compiler* compiler;
@@ -45,6 +45,9 @@ namespace rs {
 			std::vector<script_function*> global_functions;
 			std::vector<variable> global_variables;
 			std::vector<object_prototype*> prototypes;
+
+			// Not directly accessible from scripts
+			object_prototype* array_prototype;
 
 		protected:
 			dynamic_pod_array<instruction_set> m_instruction_sets;

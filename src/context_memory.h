@@ -13,6 +13,7 @@ namespace rs {
 			variable_id set(type_id type, size_t size, void* data);
 			variable_id set_static(type_id type, size_t size, void* data);
 			variable_id inject(type_id type, size_t size, void* ptr);
+			variable_id copy(variable_id id);
 			mem_var& get(variable_id id);
 
 			// callback signature MUST match 'bool (*)(const mem_var&)'

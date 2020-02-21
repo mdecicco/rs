@@ -11,6 +11,7 @@ namespace rs {
 		// copy value of thing on right into variable
 		// referred to by register on left
 		store,
+		newArr,
 		newObj,
 		addProto,
 		prop,
@@ -171,8 +172,11 @@ namespace rs {
 
 			void copy(context* ctx, size_t* size, type_id* type, void** data);
 			mem_var ref(context* ctx);
+			variable_id persist(context* ctx);
 
-
+			// todo: load registers with actual mem_var data with some instruction,
+			// so that context_memory::get(var_id) does not need to be called for
+			// basically every instruction... 
 			type_id type;
 			union {
 				variable_id v;
