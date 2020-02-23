@@ -56,13 +56,13 @@ namespace rs {
 		return false;
 	}
 
-	bool context::execute(const string& code, mem_var& result) {
+	bool context::execute(const string& code, variable& result) {
 		integer_type entry = instructions->count();
 		if (compiler->compile(code, *instructions)) {
 			try {
 				execution_state es(m_params, this);
 				es.execute(entry);
-				es.registers()[rs_register::rvalue].copy(this, &result.size, &result.type, &result.data);
+				memcpy(&result, &es.registers()[rs_register::rvalue], sizeof(variable));
 				return true;
 			} catch (const runtime_exception& e) {
 				if (e.has_source_info) {
@@ -70,47 +70,38 @@ namespace rs {
 					for (i64 c = 0;c < i64(e.col);c++) printf(" ");
 					printf("^\n");
 				} else printf("%s\n", e.text.c_str());
-				memset(&result, 0, sizeof(mem_var));
+				memset(&result, 0, sizeof(variable));
 			}
 		}
 		return false;
 	}
 
-	bool context::call_function(script_function* func, variable_id this_obj, variable_id* args, u8 arg_count, mem_var& result) {
+	bool context::call_function(script_function* func, variable_id this_obj, variable_id* args, u8 arg_count, variable& result) {
 		if (func->cpp_callback) {
 			func_args cb_args;
 			cb_args.context = this;
-			cb_args.self = this_obj == 0 ? nullptr : (script_object*)memory->get(this_obj).data;
+			if (this_obj != 0) cb_args.self = memory->get(this_obj);
 			cb_args.state = nullptr;
 
 			for (u8 i = 0;i < arg_count;i++) {
-				cb_args.parameters.push(register_type(args[i]));
+				cb_args.parameters.push(memory->get(args[i]));
 			}
 
-			variable_id ret_id = func->cpp_callback(&cb_args);
-			auto& ret = memory->get(ret_id);
-			if (ret.size) {
-				result.type = ret.type;
-				result.size = ret.size;
-				if (type_is_ptr(ret.type)) result.data = ret.data;
-				else {
-					result.data = new u8[ret.size];
-					memcpy(result.data, ret.data, ret.size);
-				}
-			}
+			variable ret = func->cpp_callback(&cb_args);
+			memcpy(&result, &ret, sizeof(variable));			
 
 			return true;
 		} else {
 			try {
 				execution_state es(m_params, this);
 				es.push_state();
-				register_type* registers = es.registers();
+				variable* registers = es.registers();
 				for (u8 i = 0;i < arg_count;i++) {
-					registers[rs_register::parameter0 + i] = args[i];
+					registers[rs_register::parameter0 + i] = memory->get(args[i]);
 				}
-				registers[rs_register::this_obj] = this_obj;
+				registers[rs_register::this_obj] = memory->get(this_obj);
 				es.execute(func->entry_point, func->exit_point);
-				es.registers()[rs_register::rvalue].copy(this, &result.size, &result.type, &result.data);
+				memcpy(&result, &es.registers()[rs_register::rvalue], sizeof(variable));
 				return true;
 			} catch (const runtime_exception& e) {
 				if (e.has_source_info) {
@@ -118,7 +109,7 @@ namespace rs {
 					for (i64 c = 0;c < i64(e.col);c++) printf(" ");
 					printf("^\n");
 				} else printf("%s\n", e.text.c_str());
-				memset(&result, 0, sizeof(mem_var));
+				memset(&result, 0, sizeof(variable));
 			}
 		}
 

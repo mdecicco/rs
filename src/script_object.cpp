@@ -15,14 +15,8 @@ namespace rs {
 		m_props.clear();
 	}
 
-	variable_id script_object::inject_property(const string& name, type_id type, size_t size, void* ptr) {
-		variable_id id = m_context->memory->inject(type, size, ptr);
-		m_props[name] = id;
-		return id;
-	}
-
-	variable_id script_object::define_property(const string& name, type_id type, size_t size, void* data) {
-		variable_id id = m_context->memory->set(type, size, data);
+	variable_id script_object::define_property(const string& name, u16 flags) {
+		variable_id id = m_context->memory->create(flags);
 		m_props[name] = id;
 		return id;
 	}
@@ -60,7 +54,7 @@ namespace rs {
 		if (call_constructor) {
 			auto constructor = prototype->constructor();
 			if (constructor) {
-				mem_var result;
+				variable result(rs_variable_flags::f_undefined);
 				m_context->call_function(constructor, m_id, args, arg_count, result);
 			}
 		}

@@ -8,7 +8,8 @@ namespace rs {
 	static type_id next_type_id = rs_builtin_type::script_type_base + 1;
 
 	object_prototype::object_prototype(context* ctx, const string& name) {
-		m_id = ctx->memory->set(rs_builtin_type::t_class, sizeof(object_prototype*), this);
+		m_id = ctx->memory->create(rs_variable_flags::f_external | rs_variable_flags::f_const | rs_variable_flags::f_static);
+		ctx->memory->get(m_id).set(this);
 		m_declaration = { 0, 0, name, "internal" };
 		m_type_id = next_type_id++;
 		m_constructor = nullptr;
@@ -16,7 +17,8 @@ namespace rs {
 	}
 
 	object_prototype::object_prototype(context* ctx, const tokenizer::token& declaration) {
-		m_id = ctx->memory->set(rs_builtin_type::t_class, sizeof(object_prototype*), this);
+		m_id = ctx->memory->create(rs_variable_flags::f_const | rs_variable_flags::f_static);
+		ctx->memory->get(m_id).set(this);
 		m_declaration = declaration;
 		m_type_id = next_type_id++;
 		m_constructor = nullptr;
@@ -31,7 +33,8 @@ namespace rs {
 	
 	script_object* object_prototype::create(context* ctx, variable_id* args, u8 arg_count) {
 		script_object* obj = new script_object(ctx);
-		obj->set_id(ctx->memory->set(rs_builtin_type::t_object, sizeof(script_object*), obj));
+		obj->set_id(ctx->memory->create(rs_variable_flags::f_external));
+		ctx->memory->get(obj->id()).set(obj);
 		obj->add_prototype(this, true, args, arg_count);
 		return obj;
 	}

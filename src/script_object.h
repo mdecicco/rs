@@ -11,10 +11,8 @@ namespace rs {
 			virtual ~script_object();
 
 			template<typename T, typename U>
-			variable_id inject_property(void* self, const std::string& name, type_id type, U T::*member);
-			variable_id inject_property(const std::string& name, type_id type, size_t size, void* ptr);
-
-			variable_id define_property(const std::string& name, type_id type, size_t size, void* data);
+			variable_id inject_property(void* self, const std::string& name, type_id type, U T::*member, bool read_only = false);
+			variable_id define_property(const std::string& name, u16 flags = 0);
 			void delete_property(const std::string& name);
 
 			variable_id property(const std::string& name);
@@ -46,10 +44,13 @@ namespace rs {
 	};
 
 	template<typename T, typename U>
-	variable_id script_object::inject_property(void* self, const std::string& name, type_id type, U T::*member) {
+	variable_id script_object::inject_property(void* self, const std::string& name, type_id type, U T::*member, bool read_only) {
+		return 0;
+		/*
 		size_t offset = (char*)&((T*)nullptr->*member) - (char*)nullptr;
 		variable_id id = m_context->memory->inject(type, sizeof(U), ((u8*)self) + offset);
 		m_props[name] = id;
 		return id;
+		*/
 	}
 };

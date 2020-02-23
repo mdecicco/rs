@@ -7,7 +7,7 @@
 #include <stack>
 
 namespace rs {
-	class variable;
+	struct variable_reference;
 	class object_prototype;
 	class script_compiler {
 		public:
@@ -17,7 +17,7 @@ namespace rs {
 			struct var_ref {
 				var_ref(context* ctx, const tokenizer::token& t, bool constant);
 				var_ref(rs_register reg, const tokenizer::token& t, bool constant);
-				var_ref(const variable& var);
+				var_ref(const variable_reference& var);
 
 				tokenizer::token name;
 				bool is_const;

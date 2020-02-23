@@ -11,7 +11,7 @@ namespace rs {
 			inline variable_id* elements() { return m_elements[0]; }
 			inline size_t count() { return m_elements.size(); }
 
-			void push(register_type& value);
+			void push(variable& value);
 
 		protected:
 			dynamic_pod_array<variable_id> m_elements;

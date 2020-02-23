@@ -216,10 +216,10 @@ namespace rs {
 	template <typename T>
 	class dynamic_pod_array {
 		public:
-			dynamic_pod_array() : m_count(0), m_capacity(16), m_data(new T[16]) {
+			dynamic_pod_array() : m_count(0), m_capacity(16), m_data((T*)new u8[16 * sizeof(T)]) {
 			}
 
-			dynamic_pod_array(size_t count) : m_count(count), m_capacity(count), m_data(new T[count]) {
+			dynamic_pod_array(size_t count) : m_count(count), m_capacity(count), m_data((T*)new u8[count * sizeof(T)]) {
 			}
 
 			~dynamic_pod_array() {

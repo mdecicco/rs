@@ -1,5 +1,6 @@
 #pragma once
 #include <defs.h>
+#include <dynamic_array.hpp>
 
 namespace rs {
 	class context_memory {
@@ -7,35 +8,32 @@ namespace rs {
 			context_memory(const context_parameters& params);
 			~context_memory();
 
-			static variable_id gen_var_id() { return next_var_id++; }
+			variable_id create(u16 flags);
+			inline bool check(variable_id id) const { return id >= m_vars.size(); }
+			inline variable& get(variable_id id) { return *m_vars[id]; }
 
-			void set(variable_id id, type_id type, size_t size, void* data);
-			variable_id set(type_id type, size_t size, void* data);
-			variable_id set_static(type_id type, size_t size, void* data);
-			variable_id inject(type_id type, size_t size, void* ptr);
-			variable_id copy(variable_id id);
-			mem_var& get(variable_id id);
+			void destroy(variable_id id);
 
-			// callback signature MUST match 'bool (*)(const mem_var&)'
+			// callback signature MUST match 'bool (*)(const variable&)'
 			template <typename F>
-			variable_id find_static(F&& find_callback) const {
-				for (auto& v : m_static_vars) {
-					if (find_callback(v.second)) return v.first;
-				}
-				return 0;
+			variable_id find_static(F&& find_callback) {
+				variable_id vid = 0;
+				bool found = false;
+				m_vars.for_each([&vid, &found, &find_callback](variable* var) {
+					if (var->is_static() && find_callback(*var)) {
+						found = true;
+						return false;
+					}
+					vid++;
+					return true;
+				});
+				return found ? vid : 0;
 			}
-
-			void deallocate(variable_id id);
 
 		protected:
 			size_t m_max_memory;
 
-			munordered_map<variable_id, mem_var> m_vars;
-			munordered_map<variable_id, mem_var> m_static_vars;
-
-			static variable_id next_var_id;
-			static mem_var null;
+			dynamic_pod_array<variable> m_vars;
+			dynamic_pod_array<variable_id> m_free_slots;
 	};
-
-	std::string var_tostring(mem_var& v);
 };

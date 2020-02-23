@@ -36,7 +36,7 @@ namespace rs {
 			void pop_scope();
 			void print_instruction(integer_type idx, const instruction_array::instruction& i);
 			inline context* ctx() { return m_ctx; }
-			inline register_type* registers() { return m_stack[m_stack_idx]; }
+			inline variable* registers() { return m_stack[m_stack_idx]; }
 			inline integer_type instruction_addr() const { return m_current_instruction_idx; }
 
 			struct scope {
@@ -46,7 +46,7 @@ namespace rs {
 		protected:
 			u32 m_last_printed_line;
 			u32 m_last_printed_col;
-			register_type (*m_stack)[rs_register::register_count];
+			variable (*m_stack)[rs_register::register_count];
 			size_t m_stack_idx;
 			size_t m_stack_depth;
 			context* m_ctx;

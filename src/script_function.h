@@ -11,14 +11,14 @@ namespace rs {
 	class execution_state;
 
 	struct func_args {
-		script_object* self;
+		variable self;
 		context* context;
 		execution_state* state;
 		struct arg {
-			mem_var var;
+			variable var;
 			variable_id id;
 		};
-		dynamic_pod_array<register_type> parameters;
+		dynamic_pod_array<variable> parameters;
 	};
 
 	class script_function {
@@ -34,7 +34,7 @@ namespace rs {
 			variable_id function_id;
 			variable_id entry_point_id;
 			dynamic_pod_array<variable_id> declared_vars;
-			std::vector<variable> params;
+			std::vector<variable_reference> params;
 
 			script_function_callback cpp_callback;
 

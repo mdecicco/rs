@@ -10,6 +10,16 @@ namespace rs {
 	using instruction = instruction_array::instruction;
 	using token = tokenizer::token;
 
+	variable_id define_static_number(context* ctx, integer_type val) {
+		variable_id vid = ctx->memory->find_static([&val](const variable& var) {
+			return var.type() == rs_builtin_type::t_integer && integer_type(var) == val;
+		});
+		if (vid) return vid;
+		vid = ctx->memory->create(rs_variable_flags::f_const | rs_variable_flags::f_static);
+		ctx->memory->get(vid).set(val);
+		return vid;
+	}
+
 	variable_id define_static_number(context* ctx, const token& tok, const script_compiler::parse_context& pctx, const tokenizer& t) {
 		variable_id vid = 0;
 
@@ -25,15 +35,12 @@ namespace rs {
 					tok.col
 				);
 			}
-			vid = ctx->memory->find_static([&v](const mem_var& mv) {
-				return mv.type == rs_builtin_type::t_decimal && (*(decimal_type*)mv.data) == v;
+			vid = ctx->memory->find_static([&v](const variable& var) {
+				return var.type() == rs_builtin_type::t_decimal && decimal_type(var) == v;
 			});
 			if (vid) return vid;
-			vid = ctx->memory->set_static(
-				rs_builtin_type::t_decimal,
-				sizeof(decimal_type),
-				&v
-			);
+			vid = ctx->memory->create(rs_variable_flags::f_const | rs_variable_flags::f_static);
+			ctx->memory->get(vid).set(v);
 		} else {
 			auto num = atoll(tok.text.c_str());
 			integer_type v = num;
@@ -46,35 +53,29 @@ namespace rs {
 					tok.col
 				);
 			}
-			vid = ctx->memory->find_static([&v](const mem_var& mv) {
-				return mv.type == rs_builtin_type::t_integer && (*(integer_type*)mv.data) == v;
+
+			vid = ctx->memory->find_static([&v](const variable& var) {
+				return var.type() == rs_builtin_type::t_integer && integer_type(var) == v;
 			});
 			if (vid) return vid;
-			vid = ctx->memory->set_static(
-				rs_builtin_type::t_integer,
-				sizeof(integer_type),
-				&v
-			);
+			vid = ctx->memory->create(rs_variable_flags::f_const | rs_variable_flags::f_static);
+			ctx->memory->get(vid).set(v);
 		}
 
 		return vid;
 	}
 
 	variable_id define_static_string(context* ctx, const string& t) {
-		variable_id existing = ctx->memory->find_static([&t](const mem_var& mv) {
-			if (mv.type != rs_builtin_type::t_string) return false;
-			string s((char*)mv.data, mv.size);
-			return s == t;
+		variable_id existing = ctx->memory->find_static([&t](const variable& var) {
+			return var.type() == rs_builtin_type::t_string && var.to_string() == t;
 		});
 		if (existing) return existing;
 
 		char* str = new char[t.length()];
 		memcpy(str, t.c_str(), t.length());
-		return ctx->memory->set_static(
-			rs_builtin_type::t_string,
-			t.length(),
-			(void*)str
-		);
+		variable_id vid = ctx->memory->create(rs_variable_flags::f_const | rs_variable_flags::f_static);
+		ctx->memory->get(vid).set(str, t.length());
+		return vid;
 	}
 
 
@@ -91,7 +92,7 @@ namespace rs {
 	script_compiler::var_ref::var_ref(context* ctx, const tokenizer::token& t, bool constant) {
 		name = t;
 		is_const = constant;
-		id = t.valid() ? ctx->memory->gen_var_id() : 0;
+		id = t.valid() ? ctx->memory->create(rs_variable_flags::f_const) : 0;
 		reg = rs_register::null_register;
 	}
 
@@ -102,7 +103,7 @@ namespace rs {
 		reg = _reg;
 	}
 
-	script_compiler::var_ref::var_ref(const variable& var) {
+	script_compiler::var_ref::var_ref(const variable_reference& var) {
 		name = var.name;
 		is_const = var.is_const;
 		id = var.id;
@@ -196,7 +197,7 @@ namespace rs {
 				f->function_id = func->function_id;
 				for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
 				for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
-				m_script_context->memory->get(func->function_id).data = f;
+				m_script_context->memory->get(func->function_id).set(f);
 				if (func->is_global) m_script_context->global_functions.push_back(f);
 			}
 
@@ -405,12 +406,13 @@ namespace rs {
 		auto body_open = t.character('{');
 
 		function_ref* func = new function_ref;
-		func->function_id = m_script_context->memory->set_static(rs_builtin_type::t_function, sizeof(script_function*), nullptr);
+		func->function_id = m_script_context->memory->create(rs_variable_flags::f_const | rs_variable_flags::f_static);
 		func->name = func_name;
 		func->params = params;
-		func->instruction_offset = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &first_instruction);
+		func->instruction_offset = define_static_number(m_script_context, first_instruction);
 		func->is_global = !ctx.currentFunction && !ctx.currentPrototype;
 		func->has_explicit_return = false;
+		m_script_context->memory->get(func->function_id).set(func);
 		ctx.currentFunction = func;
 		if (!ctx.currentPrototype) ctx.functions.push_back(func);
 
@@ -459,9 +461,7 @@ namespace rs {
 		ctx.pop_locals();
 
 		func->instruction_count = instructions.count() - first_instruction;
-		integer_type jump_to = instructions.count();
-		variable_id  jump_to_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &jump_to);
-		jump_over.arg(jump_to_id);
+		jump_over.arg(define_static_number(m_script_context, instructions.count()));
 
 		instructions.append(
 			instruction(rs_instruction::move).arg(destination).arg(func->function_id),
@@ -520,7 +520,7 @@ namespace rs {
 					f->function_id = func->function_id;
 					for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
 					for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
-					m_script_context->memory->get(func->function_id).data = f;
+					m_script_context->memory->get(func->function_id).set(f);
 					proto->static_method(f);
 				}
 			} else if (ctor_kw.valid()) {
@@ -529,7 +529,7 @@ namespace rs {
 				f->function_id = func->function_id;
 				for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
 				for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
-				m_script_context->memory->get(func->function_id).data = f;
+				m_script_context->memory->get(func->function_id).set(f);
 				proto->constructor(f);
 			} else {
 				function_ref* func = compile_function(t, ctx, instructions);
@@ -537,7 +537,7 @@ namespace rs {
 				f->function_id = func->function_id;
 				for (auto& p : func->params) f->params.push_back({ p.id, p.name, p.is_const });
 				for (auto& d : func->declared_vars) f->declared_vars.push(d.id);
-				m_script_context->memory->get(func->function_id).data = f;
+				m_script_context->memory->get(func->function_id).set(f);
 				proto->method(f);
 			}
 
@@ -1295,10 +1295,6 @@ namespace rs {
 	}
 
 	bool script_compiler::compile_statement(tokenizer& t, parse_context& ctx, instruction_array& instructions, bool parseSemicolon) {
-		// Statements can start with:
-		//	- return, if, while, for, const, let
-		//	- expressions (but the result will be ignored by the rest of the code)
-
 		t.backup_state();
 
 		auto kw = t.keyword(false);
@@ -1349,8 +1345,7 @@ namespace rs {
 				t.character(')');
 
 				integer_type pass_address = instructions.count() + 1;
-				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &pass_address);
-
+				variable_id pass_addr_id = define_static_number(m_script_context, pass_address);
 				instruction& branch = instructions.append(
 					instruction(rs_instruction::branch).arg(rs_register::rvalue).arg(pass_addr_id),
 					ctx.file,
@@ -1397,7 +1392,7 @@ namespace rs {
 					);
 
 					integer_type fail_address = instructions.count() + 1;
-					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
+					variable_id fail_addr_id = define_static_number(m_script_context, fail_address);
 					branch.arg(fail_addr_id);
 					ctx.pop_locals();
 				} else {
@@ -1425,7 +1420,7 @@ namespace rs {
 					}
 
 					integer_type fail_address = instructions.count() + 1;
-					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
+					variable_id fail_addr_id = define_static_number(m_script_context, fail_address);
 					branch.arg(fail_addr_id);
 				}
 
@@ -1466,7 +1461,7 @@ namespace rs {
 						);
 
 						integer_type after_pass_address = instructions.count() + 1;
-						variable_id after_pass_address_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &after_pass_address);
+						variable_id after_pass_address_id = define_static_number(m_script_context, after_pass_address);
 						jump_past_else.arg(after_pass_address_id);
 						jump_past_else.code = rs_instruction::jump;
 						ctx.pop_locals();
@@ -1493,7 +1488,7 @@ namespace rs {
 						}
 
 						integer_type after_pass_address = instructions.count();
-						variable_id after_pass_address_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &after_pass_address);
+						variable_id after_pass_address_id = define_static_number(m_script_context, after_pass_address);
 						jump_past_else.arg(after_pass_address_id);
 						jump_past_else.code = rs_instruction::jump;
 					}
@@ -1504,14 +1499,14 @@ namespace rs {
 			else if (kw.text == "while") {
 				ctx.current_scope_idx++;
 				integer_type expr_address = instructions.count() + 1;
-				variable_id expr_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &expr_address);
+				variable_id expr_addr_id = define_static_number(m_script_context, expr_address);
 
 				t.character('(');
 				compile_expression(t, ctx, instructions, true);
 				t.character(')');
 
 				integer_type pass_address = instructions.count() + 1;
-				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &pass_address);
+				variable_id pass_addr_id = define_static_number(m_script_context, pass_address);
 
 				instruction& branch = instructions.append(
 					instruction(rs_instruction::branch).arg(rs_register::rvalue).arg(pass_addr_id),
@@ -1570,7 +1565,7 @@ namespace rs {
 				);
 
 				integer_type fail_address = instructions.count();
-				variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
+				variable_id fail_addr_id = define_static_number(m_script_context, fail_address);
 				branch.arg(fail_addr_id);
 
 				ctx.current_scope_idx--;
@@ -1592,7 +1587,7 @@ namespace rs {
 					compile_statement(t, ctx, instructions);
 				}
 				integer_type expr_address = instructions.count();
-				variable_id expr_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &expr_address);
+				variable_id expr_addr_id = define_static_number(m_script_context, expr_address);
 
 				sc = t.semicolon(false);
 				if (!sc.valid()) {
@@ -1601,7 +1596,7 @@ namespace rs {
 				}
 
 				integer_type pass_address = instructions.count() + 1;
-				variable_id pass_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &pass_address);
+				variable_id pass_addr_id = define_static_number(m_script_context, pass_address);
 
 				instruction& branch = instructions.append(
 					instruction(rs_instruction::branch).arg(rs_register::rvalue).arg(pass_addr_id),
@@ -1645,7 +1640,7 @@ namespace rs {
 					);
 
 					integer_type fail_address = instructions.count();
-					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
+					variable_id fail_addr_id = define_static_number(m_script_context, fail_address);
 					branch.arg(fail_addr_id);
 
 					instructions.append(
@@ -1668,7 +1663,7 @@ namespace rs {
 					);
 
 					integer_type fail_address = instructions.count();
-					variable_id fail_addr_id = m_script_context->memory->set_static(rs_builtin_type::t_integer, sizeof(integer_type), &fail_address);
+					variable_id fail_addr_id = define_static_number(m_script_context, fail_address);
 					branch.arg(fail_addr_id);
 
 					instructions.append(

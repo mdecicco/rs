@@ -1,5 +1,9 @@
 #include <defs.h>
+#include <parse_utils.h>
 #include <script_object.h>
+#include <script_array.h>
+using namespace std;
+
 #define max(a, b) ((a) > (b) ? (a) : (b))
 namespace rs {
 	const size_t max_variable_size = max(
@@ -22,88 +26,116 @@ namespace rs {
 		sizeof(object_prototype*)
 	};
 
-
-	register_type::register_type() {
-		type = rs_builtin_type::t_null;
-		data.v = 0;
-	}
-	register_type::register_type(variable_id v) {
-		type = rs_builtin_type::t_null;
-		data.v = v;
-	}
-	register_type::register_type(integer_type i) {
-		type = rs_builtin_type::t_integer;
-		data.i = i;
-	}
-	register_type::register_type(decimal_type d) {
-		type = rs_builtin_type::t_decimal;
-		data.d = d;
-	}
-	register_type::register_type(bool b) {
-		type = rs_builtin_type::t_bool;
-		data.b = b;
+	variable::variable() {
+		m_id = 0;
+		m_flags = 0;
+		m_flags |= u8(rs_builtin_type::t_null);
+		m_flags |= (u8(0) << 8);
+		m_flags |= (rs_variable_flags::f_undefined << 16);
 	}
 
-	register_type::operator variable_id&() { return data.v; }
-	register_type::operator integer_type&() { return data.i; }
-	register_type::operator decimal_type&() { return data.d; }
-	register_type::operator u8&() { return data.b; }
+	variable::variable(u16 flags) {
+		m_id = 0;
+		m_flags = 0;
+		m_flags |= u8(rs_builtin_type::t_null);
+		m_flags |= (u8(0) << 8);
+		m_flags |= (flags << 16);
+	}
 
-	void register_type::copy(context* ctx, size_t* size, type_id* _type, void** _data) {
-		switch (type) {
-			case rs_builtin_type::t_null:
-				if (data.v == 0) {
-					*size = 0;
-					*_type = type;
-					*_data = nullptr;
-					return;
+	variable::~variable() {
+	}
+
+	variable_id variable::persist(context* ctx) {
+		if (m_id) return m_id;
+		m_id = ctx->memory->create((m_flags >> 16) & 0xFFFF);
+		ctx->memory->get(m_id).set(*this);
+		return m_id;
+	}
+
+	string variable::to_string() const {
+		if (is_undefined()) return "undefined";
+		else if (is_null()) return "null";
+
+		string val;
+		u8 t = type();
+		switch (t) {
+			case rs::rs_builtin_type::t_string: {
+				size_t sz = *(size_t*)m_data;
+				char* str = *(char**)(m_data + sizeof(size_t));
+				val = std::string(str, sz);
+				break;
+			}
+			case rs::rs_builtin_type::t_integer: {
+				val = format("%d", *(integer_type*)m_data);
+				break;
+			}
+			case rs::rs_builtin_type::t_decimal: {
+				val = format("%f", *(decimal_type*)m_data);
+				break;
+			}
+			case rs::rs_builtin_type::t_bool: {
+				val = format("%s", (*(bool*)m_data) ? "true" : "false");
+				break;
+			}
+			case rs::rs_builtin_type::t_class: {
+				val = "<class>";
+				break;
+			}
+			case rs::rs_builtin_type::t_function: {
+				val = "<function>";
+				break;
+			}
+			case rs::rs_builtin_type::t_object: {
+				val = "<object>";
+				break;
+				script_object* obj = *(script_object**)m_data;
+				auto properties = obj->properties();
+				val = "{ ";
+
+				u32 i = 0;
+				for (auto& p : properties) {
+					if (i > 0) val += ", ";
+					val += p.name + ": " + obj->ctx()->memory->get(p.id).to_string();
+					i++;
 				}
-				mem_var v = ctx->memory->get(data.v);
-				*size = v.size;
-				*_type = v.type;
-				*_data = nullptr;
-				if (type_is_ptr(v.type)) *_data = v.data;
-				else if (v.size) {
-					*_data = new u8[v.size];
-					memcpy(*_data, v.data, v.size);
+
+				if (i > 0) val += " ";
+
+				val += "}";
+
+				break;
+			}
+			case rs::rs_builtin_type::t_array: {
+				script_array* arr = (script_array*)m_data;
+				auto properties = arr->properties();
+				auto elements = arr->elements();
+				auto element_count = arr->count();
+				val = "[ ";
+
+				u32 i = 0;
+				for (i;i < element_count;i++) {
+					if (i > 0) val += ", ";
+					val += arr->ctx()->memory->get(elements[i]).to_string();
 				}
-				return;
-			case rs_builtin_type::t_integer:
-				*size = sizeof(integer_type);
-				*_type = type;
-				*_data = new u8[*size];
-				memcpy(*_data, &data, *size);
-				return;
-			case rs_builtin_type::t_decimal:
-				*size = sizeof(decimal_type);
-				*_type = type;
-				*_data = new u8[*size];
-				memcpy(*_data, &data, *size);
-				return;
-			case rs_builtin_type::t_bool:
-				*size = sizeof(u8);
-				*_type = type;
-				*_data = new u8[*size];
-				((u8*)*_data)[0] = data.b;
-				return;
+
+				for (auto& p : properties) {
+					if (i > 0) val += ", ";
+					val += p.name + ": " + arr->ctx()->memory->get(p.id).to_string();
+					i++;
+				}
+
+				if (i > 0) val += " ";
+
+				val += "]";
+
+				break;
+			}
+			default: {
+				val = "<scripted type>";
+				break;
+			}
 		}
-	}
 
-	mem_var register_type::ref(context* ctx) {
-		if (type == rs_builtin_type::t_null) return ctx->memory->get(data.v);
-		mem_var v;
-		v.data = &data;
-		v.external = false;
-		v.size = type_sizes[type];
-		v.type = type;
-		return v;
-	}
-
-	variable_id register_type::persist(context* ctx) {
-		if (type == rs_builtin_type::t_null) return data.v;
-		variable_id vid = ctx->memory->set(type, type_sizes[type], &data);
-		type = rs_builtin_type::t_null;
-		data.v = vid;
-		return vid;
+		return val;
 	}
 };

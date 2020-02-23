@@ -8,7 +8,7 @@ namespace rs {
 		name = _name;
 		cpp_callback = nullptr;
 		entry_point_id = entry_id;
-		entry_point = *(u64*)ctx->memory->get(entry_id).data;
+		entry_point = ctx->memory->get(entry_id);
 		exit_point = entry_point + instruction_count;
 	}
 
@@ -19,7 +19,8 @@ namespace rs {
 		entry_point_id = 0;
 		entry_point = 0;
 		exit_point = 0;
-		function_id = ctx->memory->set(rs_builtin_type::t_function, sizeof(script_function*), this);
+		function_id = ctx->memory->create(rs_variable_flags::f_const | rs_variable_flags::f_external | rs_variable_flags::f_static);
+		ctx->memory->get(function_id).set(this);
 	}
 
 	script_function::~script_function() {

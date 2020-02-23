@@ -10,7 +10,7 @@ namespace rs {
 
 	typedef void (*instruction_callback)(execution_state*, instruction_array::instruction*);
 
-	struct variable {
+	struct variable_reference {
 		variable_id id;
 		tokenizer::token name;
 		bool is_const;
@@ -23,8 +23,8 @@ namespace rs {
 			~context();
 
 			bool add_code(const std::string& code);
-			bool execute(const std::string& code, mem_var& result);
-			bool call_function(script_function* func, variable_id this_obj, variable_id* args, u8 arg_count, mem_var& result);
+			bool execute(const std::string& code, variable& result);
+			bool call_function(script_function* func, variable_id this_obj, variable_id* args, u8 arg_count, variable& result);
 			const context_parameters& params() const { return m_params; }
 
 			struct instruction_set {
@@ -43,7 +43,7 @@ namespace rs {
 			context_memory* memory;
 
 			std::vector<script_function*> global_functions;
-			std::vector<variable> global_variables;
+			std::vector<variable_reference> global_variables;
 			std::vector<object_prototype*> prototypes;
 
 			// Not directly accessible from scripts
